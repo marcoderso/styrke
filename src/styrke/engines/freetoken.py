@@ -21,6 +21,7 @@ ALIASES = {
 class FreeTokenEngine(DockerEngine):
     kind = "freetoken"
     entrypoint = "ft"
+    build_dir = "engines/freetoken"
 
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)

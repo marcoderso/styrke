@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
 from pathlib import Path
 
@@ -291,3 +292,105 @@ def test_freetoken_command_contains_model_ports_and_variant_args():
     assert "--kv-reserve-tokens 2097152" in joined and "--max-running-requests 16" in joined
     assert "--enable-cache-report" in joined and "--enable-cache-report True" not in joined
     assert engine.base_url == "http://127.0.0.1:18000"
+
+
+# -- Vorprüfung ---------------------------------------------------------------
+
+
+def _fake_docker(monkeypatch, *, image_present: bool, busy: list[str], containers: str = "", stale: bool = False):
+    """Ersetzt Docker und nvidia-smi durch feste Antworten; liefert die Liste der Aufrufe."""
+    import styrke.engines.docker as d
+
+    calls: list[tuple[str, ...]] = []
+
+    async def run_cmd(*cmd: str, timeout: float = 120):
+        calls.append(cmd)
+        if cmd[:2] == ("docker", "version"):
+            return 0, "27.0\n"
+        if cmd[:3] == ("docker", "image", "inspect"):
+            return (0, "sha256:abc\n") if image_present else (1, "No such image")
+        if cmd[:3] == ("docker", "ps", "-aq"):
+            return 0, "deadbeef\n" if stale else ""
+        if cmd[:3] == ("docker", "ps", "--no-trunc"):
+            return 0, containers
+        return 0, ""
+
+    monkeypatch.setattr(d, "run_cmd", run_cmd)
+    monkeypatch.setattr(d, "gpu_processes", lambda: list(busy))
+    return calls
+
+
+def _freetoken_engine(tmp_path, with_model: bool = True, **kwargs):
+    local = tmp_path / "local.yaml"
+    local.write_text(yaml.safe_dump({"host": {"models_dir": str(tmp_path)}}), encoding="utf-8")
+    matrix = load_matrix(REPO / "matrix.yaml", local=local)
+    cell = matrix.cell("flashnext-freetoken")
+    model = matrix.models[cell.model]
+    if with_model:
+        (tmp_path / model.dir).mkdir(parents=True, exist_ok=True)
+        (tmp_path / model.dir / "config.json").write_text("{}", encoding="utf-8")
+    return FreeTokenEngine(matrix.host, matrix.engines["freetoken"], model, cell.variant("basis"), **kwargs)
+
+
+def test_check_setup_names_all_gaps_at_once(tmp_path, monkeypatch):
+    import styrke.engines.docker as d
+    from styrke.engines import SetupError
+
+    cid = "a" * 64
+    monkeypatch.setattr(d, "container_of_pid", lambda pid, containers: containers.get(cid) if pid == "4711" else None)
+    _fake_docker(
+        monkeypatch, image_present=False, busy=["4711, /usr/bin/python3, 140000 MiB"], containers=f"{cid} dienst-xy\n"
+    )
+    engine = _freetoken_engine(tmp_path, with_model=False)
+    with pytest.raises(SetupError) as err:
+        asyncio.run(engine.check_setup())
+    problems = err.value.problems
+    assert len(problems) == 3
+    assert "config.json nicht gefunden" in problems[0] and "host.models_dir" in problems[0]
+    assert "docker build -t styrke/freetoken:0.2.1 engines/freetoken" in problems[1]
+    assert "engines.freetoken.image" in problems[1]
+    assert "vom Container dienst-xy belegt" in problems[2] and "docker stop dienst-xy" in problems[2]
+
+
+def test_check_setup_passes_and_busy_gpu_can_be_allowed(tmp_path, monkeypatch):
+    from styrke.engines import SetupError
+
+    _fake_docker(monkeypatch, image_present=True, busy=[])
+    engine = _freetoken_engine(tmp_path)
+    asyncio.run(engine.check_setup())
+    assert engine.image_id == "sha256:abc"
+
+    _fake_docker(monkeypatch, image_present=True, busy=["1, x, 5 MiB"])
+    with pytest.raises(SetupError, match="von einem anderen Prozess belegt"):
+        asyncio.run(_freetoken_engine(tmp_path).check_setup())
+    asyncio.run(_freetoken_engine(tmp_path, allow_busy_gpu=True).check_setup())
+
+
+def test_check_setup_waits_for_gpu_after_own_container(tmp_path, monkeypatch):
+    """Nach dem Entfernen eines eigenen Containers darf die GPU noch kurz belegt sein."""
+    import styrke.engines.docker as d
+
+    calls = _fake_docker(monkeypatch, image_present=True, busy=[], stale=True)
+    answers = [["9, ft, 100 MiB"], ["9, ft, 100 MiB"], []]
+    monkeypatch.setattr(d, "gpu_processes", lambda: answers.pop(0) if answers else [])
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(d.asyncio, "sleep", no_sleep)
+    asyncio.run(_freetoken_engine(tmp_path).check_setup())
+    assert ("docker", "rm", "-f", "styrke-engine") in calls and answers == []
+
+
+def test_container_of_pid_reads_cgroup(monkeypatch):
+    import styrke.engines.docker as d
+
+    cid = "0123456789abcdef" * 4
+    real = d.Path.read_text
+
+    def read_text(self, **kw):
+        return f"0::/system.slice/docker-{cid}.scope\n" if str(self) == "/proc/1/cgroup" else real(self, **kw)
+
+    monkeypatch.setattr(d.Path, "read_text", read_text)
+    assert d.container_of_pid("1", {cid: "dienst"}) == "dienst"
+    assert d.container_of_pid("1", {}) is None

@@ -24,7 +24,7 @@ from . import __version__
 from .client import RequestSpec
 from .config import ConfigError, Matrix, load_matrix
 from .corpus import Corpus
-from .engines import EngineError, ExternalEngine, make_adapter
+from .engines import EngineAdapter, EngineError, ExternalEngine, SetupError, make_adapter
 from .prompts import PromptBuilder, make_counter
 from .sampler import GpuSampler, PeriodicSampler, gpu_snapshot, host_snapshot
 from .stages import STAGES
@@ -110,7 +110,12 @@ async def _warmup(ctx: StageContext, stage: int) -> None:
 
 
 async def run_cell(opts: RunOptions, log: Callable[[str], None] = print) -> int:
-    """Fährt die gewählten Stufen; Rückgabewert 0 bei Erfolg, 2 bei einem Engine-Fehler."""
+    """Fährt die gewählten Stufen.
+
+    Rückgabewert: 0 bei Erfolg, 2 bei einem Engine-Fehler (ein Messergebnis:
+    die Zelle lädt oder hält nicht), 3 wenn die Maschine nicht vorbereitet ist
+    (dann entsteht kein Laufordner).
+    """
     matrix = load_matrix(opts.matrix_path)
     cell = matrix.cell(opts.cell_id)
     variant = cell.variant(opts.variant_id)
@@ -122,6 +127,17 @@ async def run_cell(opts: RunOptions, log: Callable[[str], None] = print) -> int:
         raise ConfigError(f"Diese Stufen gibt es noch nicht: {unknown} (vorhanden: {sorted(STAGES)})")
     if not opts.endpoint and not cell.enabled:
         raise ConfigError(f"Zelle {cell.id!r} ist noch nicht freigeschaltet: {cell.note}")
+
+    adapter: EngineAdapter | None = None
+    if not opts.endpoint:
+        adapter = make_adapter(matrix.host, engine_cfg, model, variant, allow_busy_gpu=opts.allow_busy_gpu)
+        try:
+            await adapter.check_setup()
+        except SetupError as exc:
+            log("Nicht gestartet, die Vorbereitung ist unvollständig:")
+            for i, problem in enumerate(exc.problems, 1):
+                log(f"  {i}. {problem}")
+            return 3
 
     counter = make_counter(Path(matrix.host.models_dir) / model.dir / model.tokenizer)
     corpus = Corpus.load(matrix.host.corpus_dir)
@@ -142,12 +158,10 @@ async def run_cell(opts: RunOptions, log: Callable[[str], None] = print) -> int:
     started = False
     connector = aiohttp.TCPConnector(limit=0)
     async with aiohttp.ClientSession(connector=connector) as session:
-        if opts.endpoint:
+        if adapter is None:
             served = opts.model_name or await _discover_model(session, opts.endpoint) or model.served_name
             adapter = ExternalEngine(opts.endpoint, served)
             log(f"Hänge an laufende Engine an: {opts.endpoint} (Modell {served})")
-        else:
-            adapter = make_adapter(matrix.host, engine_cfg, model, variant, allow_busy_gpu=opts.allow_busy_gpu)
         ctx = StageContext(
             store=store, adapter=adapter, session=session, model=model, params=params, builder=builder, log=log,
             # Zufälliger Startwert: Prompts eines Laufs treffen nie den Präfix-Cache eines früheren Laufs.

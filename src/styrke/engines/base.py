@@ -15,6 +15,18 @@ class EngineError(RuntimeError):
     """Die Engine ließ sich nicht starten, wurde nicht bereit oder ist abgestürzt."""
 
 
+class SetupError(EngineError):
+    """Die Maschine ist für den Start nicht vorbereitet (Image, Modell, belegte GPU).
+
+    Das ist kein Messergebnis der Zelle: Die Ablaufsteuerung bricht vor dem
+    Lauf ab und nennt alle Punkte aus ``problems`` auf einmal.
+    """
+
+    def __init__(self, problems: list[str]):
+        super().__init__(" | ".join(problems))
+        self.problems = problems
+
+
 class EngineAdapter:
     """Schnittstelle, über die die Ablaufsteuerung eine Engine bedient.
 
@@ -29,6 +41,9 @@ class EngineAdapter:
         self.base_url = base_url.rstrip("/")
         self.served_name = served_name
         self.load_time_s: float | None = None
+
+    async def check_setup(self) -> None:
+        """Wirft ``SetupError``, wenn für den Start etwas fehlt. Startet nichts."""
 
     async def start(self, store: Any) -> None:
         """Startet die Engine; kehrt zurück, sobald der Prozess läuft (nicht: bereit ist)."""

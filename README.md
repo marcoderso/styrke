@@ -34,6 +34,20 @@ cp local.example.yaml local.yaml      # Pfade der Maschine eintragen
 
 `local.yaml` überschreibt einzelne Werte der Testmatrix und bleibt auf der Maschine (steht in `.gitignore`). Wichtig sind `host.models_dir` (dort liegen die Modellordner) und `host.cache_dir`.
 
+Für einen Messlauf braucht jede Engine ihr Image. Das für FreeToken wird gebaut (dauert einige Minuten):
+
+```bash
+docker build -t styrke/freetoken:0.2.1 engines/freetoken
+```
+
+Liegt schon ein passendes Image auf der Maschine, genügt ein Eintrag in `local.yaml`; die Vorlage enthält ihn auskommentiert:
+
+```yaml
+engines:
+  freetoken:
+    image: <name>:<tag>
+```
+
 `corpus fetch` lässt sich fortsetzen: Was schon im Ordner `corpus/` liegt, zählt mit und wird nicht erneut geladen. Antwortet die Quelle zeitweise nicht, wartet der Abruf mit wachsenden Pausen und gibt erst nach gut zehn Minuten auf; derselbe Aufruf macht später dort weiter. Ein Teilbestand ist bereits nutzbar, `styrke corpus info` zeigt seine Größe.
 
 Ist die Quelle gar nicht erreichbar: eigene deutsche Textdateien (`*.txt`, zusammen mindestens einige Megabyte) in den Ordner `corpus/` legen. Ohne Korpus greift ein eingebauter Mini-Korpus, der nur für Funktionstests taugt.
@@ -73,7 +87,9 @@ Nützliche Schalter von `styrke run`:
 | `--resume ORDNER` | abgeschlossene Stufen überspringen |
 | `--allow-busy-gpu` | auch starten, wenn die GPU schon belegt ist |
 
-Ein Fehlstart ist ein Ergebnis: Lädt eine Zelle nicht, steht der Grund in `feasibility.json`, und der Rückgabewert ist 2.
+Vor dem Start prüft styrke die Vorbereitung: Image vorhanden, Modell vorhanden, GPU frei. Fehlt etwas, nennt styrke alle Punkte auf einmal, legt keinen Laufordner an und endet mit dem Rückgabewert 3.
+
+Ein Fehlstart der Engine ist dagegen ein Ergebnis: Lädt eine Zelle nicht, steht der Grund in `feasibility.json`, und der Rückgabewert ist 2.
 
 ## Testmatrix
 

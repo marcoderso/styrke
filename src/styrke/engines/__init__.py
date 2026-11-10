@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from ..config import EngineConfig, HostConfig, ModelConfig, VariantConfig
-from .base import EngineAdapter, EngineError, ExternalEngine
+from .base import EngineAdapter, EngineError, ExternalEngine, SetupError
 from .freetoken import FreeTokenEngine
 
-__all__ = ["EngineAdapter", "EngineError", "ExternalEngine", "FreeTokenEngine", "make_adapter"]
+__all__ = ["EngineAdapter", "EngineError", "ExternalEngine", "FreeTokenEngine", "SetupError", "make_adapter"]
 
 
 def make_adapter(

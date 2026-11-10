@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import shlex
 import subprocess
 import time
@@ -11,7 +12,7 @@ from typing import Any
 
 from ..config import EngineConfig, HostConfig, ModelConfig, VariantConfig
 from ..sampler import gpu_processes
-from .base import EngineAdapter, EngineError
+from .base import EngineAdapter, EngineError, SetupError
 
 CONTAINER_NAME = "styrke-engine"
 
@@ -48,6 +49,33 @@ def render_args(args: dict[str, Any]) -> list[str]:
     return out
 
 
+def container_of_pid(pid: str, containers: dict[str, str]) -> str | None:
+    """Name des Docker-Containers, zu dem ein Prozess gehört (über dessen cgroup)."""
+    try:
+        cgroup = Path(f"/proc/{pid}/cgroup").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for cid in re.findall(r"[0-9a-f]{64}", cgroup):
+        if cid in containers:
+            return containers[cid]
+    return None
+
+
+async def gpu_users() -> tuple[list[str], list[str]]:
+    """Wer die GPU belegt: (Zeilen von nvidia-smi, Namen der beteiligten Container)."""
+    busy = gpu_processes()
+    if not busy:
+        return [], []
+    code, out = await run_cmd("docker", "ps", "--no-trunc", "--format", "{{.ID}} {{.Names}}", timeout=30)
+    containers = dict(line.split(None, 1) for line in out.splitlines() if " " in line) if code == 0 else {}
+    names: list[str] = []
+    for line in busy:
+        name = container_of_pid(line.split(",")[0].strip(), containers)
+        if name and name not in names:
+            names.append(name)
+    return busy, names
+
+
 def tail(path: Path, lines: int = 30) -> str:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -61,6 +89,8 @@ class DockerEngine(EngineAdapter):
 
     managed = True
     entrypoint: str | None = None
+    build_dir: str | None = None  # Ordner mit dem Dockerfile, falls das Image selbst gebaut wird
+    gpu_release_wait_s = 60.0  # so lange darf die GPU nach dem Ende eines Containers noch belegt sein
 
     def __init__(
         self,
@@ -82,6 +112,8 @@ class DockerEngine(EngineAdapter):
         self._log_proc: subprocess.Popen | None = None
         self._log_path: Path | None = None
         self._started = False
+        self._validated = False
+        self._released_gpu = False  # ein eigener Container wurde gerade beendet
 
     # -- von Unterklassen zu liefern -----------------------------------
 
@@ -122,36 +154,63 @@ class DockerEngine(EngineAdapter):
 
     # -- Lebenszyklus ----------------------------------------------------
 
-    async def preflight(self) -> None:
+    def image_hint(self) -> str:
+        image, name = self.engine.image, self.engine.name
+        how = f"Bauen: docker build -t {image} {self.build_dir}" if self.build_dir else f"Ziehen: docker pull {image}"
+        return (
+            f"Das Image {image} ist lokal nicht vorhanden. {how}. "
+            f"Oder ein vorhandenes Image in local.yaml eintragen (engines.{name}.image)."
+        )
+
+    async def check_setup(self) -> None:
+        """Prüft alles, was vor dem Start stimmen muss, und nennt alle Lücken auf einmal."""
         code, out = await run_cmd("docker", "version", "--format", "{{.Server.Version}}", timeout=30)
         if code != 0:
-            raise EngineError(f"Docker ist nicht benutzbar: {out.strip()[:300]}")
+            raise SetupError([f"Docker ist nicht benutzbar: {out.strip()[:300]}"])
 
+        problems: list[str] = []
         model_dir = Path(self.host.models_dir) / self.model.dir
         if not (model_dir / "config.json").is_file():
-            raise EngineError(
-                f"Modell fehlt: {model_dir}/config.json nicht gefunden. "
-                f"Herunterladen z. B. mit: hf download {self.model.repo} --local-dir {model_dir}"
+            problems.append(
+                f"Das Modell fehlt: {model_dir}/config.json nicht gefunden. Liegt es woanders, host.models_dir in "
+                f"local.yaml anpassen; sonst herunterladen: hf download {self.model.repo} --local-dir {model_dir}"
             )
 
         code, out = await run_cmd("docker", "image", "inspect", "--format", "{{.Id}}", self.engine.image, timeout=30)
         if code != 0:
-            raise EngineError(f"Image {self.engine.image} ist lokal nicht vorhanden (bauen oder ziehen)")
-        self.image_id = out.strip()
+            problems.append(self.image_hint())
+        else:
+            self.image_id = out.strip()
 
         # Ein liegengebliebener Container von styrke selbst wird entfernt.
         code, out = await run_cmd("docker", "ps", "-aq", "--filter", f"name=^{self.name}$", timeout=30)
         if code == 0 and out.strip():
             await run_cmd("docker", "rm", "-f", self.name, timeout=120)
+            self._released_gpu = True
 
-        busy = gpu_processes()
-        if busy and not self.allow_busy_gpu:
-            raise EngineError(
-                "Die GPU ist belegt: " + "; ".join(busy) + ". "
-                "Messungen brauchen die GPU exklusiv; den anderen Dienst erst stoppen "
-                "oder mit --allow-busy-gpu trotzdem starten."
-            )
-        await self.validate()
+        if not self.allow_busy_gpu:
+            busy, names = await gpu_users()
+            # Nach dem Ende eines eigenen Containers gibt der Treiber den Speicher erst kurz darauf frei.
+            deadline = time.monotonic() + (self.gpu_release_wait_s if self._released_gpu else 0.0)
+            while busy and time.monotonic() < deadline:
+                await asyncio.sleep(2)
+                busy, names = await gpu_users()
+            if busy:
+                who = f"vom Container {', '.join(names)}" if names else "von einem anderen Prozess"
+                stop = f" (docker stop {' '.join(names)})" if names else ""
+                problems.append(
+                    f"Die GPU ist {who} belegt: {'; '.join(busy)}. Messungen brauchen die GPU allein; "
+                    f"den Dienst für die Dauer des Laufs stoppen{stop} oder mit --allow-busy-gpu trotzdem starten."
+                )
+        self._released_gpu = False
+        if problems:
+            raise SetupError(problems)
+
+    async def preflight(self) -> None:
+        await self.check_setup()
+        if not self._validated:
+            await self.validate()
+            self._validated = True
 
     async def start(self, store: Any) -> None:
         await self.preflight()
@@ -194,6 +253,7 @@ class DockerEngine(EngineAdapter):
             await run_cmd("docker", "stop", "-t", "30", self.name, timeout=120)
             await run_cmd("docker", "rm", "-f", self.name, timeout=120)
             self._started = False
+            self._released_gpu = True
 
     def describe(self) -> dict[str, Any]:
         return {
