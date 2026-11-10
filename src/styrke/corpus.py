@@ -12,6 +12,7 @@ Funktionstests taugt.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import random
@@ -158,13 +159,45 @@ def _http_json(url: str, timeout: float = 60) -> dict[str, Any]:
         return json.load(resp)
 
 
+# Fehler, bei denen ein späterer Versuch Aussicht hat: Netz, Zeitüberschreitung,
+# abgeschnittene oder unlesbare Antwort, Störung auf der Gegenseite.
+FETCH_ERRORS = (urllib.error.URLError, http.client.HTTPException, OSError, ValueError)
+# Statuscodes, bei denen Warten nichts ändert (falsche Adresse, kein Zugriff).
+PERMANENT_STATUS = {400, 401, 403, 404}
+FILE_PREFIX = "wikipedia-de-"
+
+
+def _retry_after(exc: BaseException) -> float | None:
+    """Wartezeit, die die Gegenseite selbst nennt (Kopfzeile ``Retry-After``)."""
+    headers = getattr(exc, "headers", None)
+    value = headers.get("Retry-After") if headers is not None else None
+    try:
+        return max(1.0, min(600.0, float(value))) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _existing(out: Path) -> dict[int, int]:
+    """Schon geladene Dateien: Stelle im Datensatz und Zeichenzahl."""
+    found: dict[int, int] = {}
+    for path in out.glob(f"{FILE_PREFIX}*.txt"):
+        try:
+            offset = int(path.stem[len(FILE_PREFIX) :])
+        except ValueError:
+            continue
+        found[offset] = len(path.read_text(encoding="utf-8", errors="replace"))
+    return found
+
+
 def fetch_wikipedia(
     corpus_dir: str | os.PathLike,
     target_mb: float = 40.0,
     seed: int = 20261110,
     fetch_json: Callable[[str], dict[str, Any]] = _http_json,
     log: Callable[[str], None] = print,
-    pause_s: float = 0.5,
+    pause_s: float = 1.0,
+    max_failures: int = 10,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     """Lädt Artikel der deutschsprachigen Wikipedia in den Korpus-Ordner.
 
@@ -172,41 +205,79 @@ def fetch_wikipedia(
     ``wikimedia/wikipedia``. Die Artikel werden an zufälligen Stellen des
     Datensatzes entnommen, damit die Themen breit gestreut sind. Lizenz der
     Texte: CC BY-SA; sie bleiben auf der Maschine und werden nicht weitergegeben.
+
+    Der Abruf lässt sich fortsetzen: Was schon im Ordner liegt, zählt mit und
+    wird nicht erneut geladen. Antwortet die Quelle nicht, wartet der Abruf mit
+    wachsenden Pausen und gibt erst nach ``max_failures`` Fehlversuchen in Folge
+    auf (bei den Standardwerten nach gut zehn Minuten).
     """
     out = Path(corpus_dir)
     out.mkdir(parents=True, exist_ok=True)
     base = {"dataset": WIKI_DATASET, "config": WIKI_CONFIG, "split": "train"}
+    target_chars = int(target_mb * 1_000_000)
+    have = _existing(out)
+    got_chars = sum(have.values())
+    new_files = 0
+
+    def result() -> dict[str, Any]:
+        return {"files": len(have), "new_files": new_files, "chars": got_chars, "dir": str(out)}
+
+    if got_chars >= target_chars:
+        log(f"  {got_chars / 1e6:.1f} MB sind schon vorhanden, nichts zu tun")
+        return result()
+    if have:
+        log(f"  {got_chars / 1e6:.1f} MB sind schon vorhanden, der Abruf setzt dort fort")
 
     def rows_url(offset: int, length: int) -> str:
         return ROWS_API + "?" + urllib.parse.urlencode({**base, "offset": offset, "length": length})
 
-    try:
-        first = fetch_json(rows_url(0, 1))
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise CorpusError(
-            f"Die Wikipedia-Quelle ist nicht erreichbar ({exc}). "
-            f"Alternative: eigene deutsche Textdateien (*.txt) nach {out}/ legen."
-        ) from exc
-    total_rows = int(first.get("num_rows_total") or 0)
-    if total_rows < 1000:
-        raise CorpusError("Unerwartete Antwort der Wikipedia-Quelle (num_rows_total fehlt)")
+    failures = 0
+
+    def failed(exc: BaseException) -> None:
+        """Zählt einen Fehlversuch, wartet oder gibt auf."""
+        nonlocal failures
+        failures += 1
+        stand = (
+            f"Im Ordner {out}/ liegen schon {got_chars / 1e6:.1f} MB ({len(have)} "
+            f"{'Datei' if len(have) == 1 else 'Dateien'}); sie sind nutzbar, und derselbe Aufruf setzt später dort fort."
+            if have
+            else f"Alternative: eigene deutsche Textdateien (*.txt) nach {out}/ legen."
+        )
+        code = getattr(exc, "code", None)
+        if code in PERMANENT_STATUS:
+            raise CorpusError(f"Die Wikipedia-Quelle lehnt die Anfrage ab ({exc}). {stand}") from exc
+        if failures >= max_failures:
+            raise CorpusError(
+                f"Die Wikipedia-Quelle antwortet seit {failures} Versuchen nicht ({exc}). {stand}"
+            ) from exc
+        wait = _retry_after(exc) or min(120.0, 5.0 * 2 ** (failures - 1))
+        log(f"  Quelle antwortet nicht ({exc}); Versuch {failures} von {max_failures}, weiter in {wait:.0f} s")
+        sleep(wait)
+
+    total_rows = 0
+    while not total_rows:
+        try:
+            first = fetch_json(rows_url(0, 1))
+        except FETCH_ERRORS as exc:
+            failed(exc)
+            continue
+        total_rows = int(first.get("num_rows_total") or 0)
+        if total_rows < 1000:
+            raise CorpusError("Unerwartete Antwort der Wikipedia-Quelle (num_rows_total fehlt)")
+    failures = 0
 
     rng = random.Random(seed)
-    target_chars = int(target_mb * 1_000_000)
-    got_chars = 0
-    files = 0
-    failures = 0
+    shown_mb = int(got_chars / 1e6)
     while got_chars < target_chars:
         offset = rng.randrange(0, max(1, total_rows - 100))
+        if offset in have:  # aus einem früheren Abruf
+            continue
         try:
             data = fetch_json(rows_url(offset, 100))
-            failures = 0
-        except (urllib.error.URLError, OSError, ValueError) as exc:
-            failures += 1
-            if failures >= 5:
-                raise CorpusError(f"Abbruch nach fünf Fehlversuchen in Folge: {exc}") from exc
-            time.sleep(min(60, 5 * failures))
+        except FETCH_ERRORS as exc:
+            failed(exc)  # danach eine andere Stelle versuchen
             continue
+        failures = 0
         parts: list[str] = []
         for item in data.get("rows") or []:
             row = item.get("row") or {}
@@ -216,10 +287,13 @@ def fetch_wikipedia(
             parts.append(f"# {row.get('title', '')}\n\n{text}")
         if parts:
             blob = "\n\n".join(parts) + "\n"
-            (out / f"wikipedia-de-{offset:08d}.txt").write_text(blob, encoding="utf-8")
+            (out / f"{FILE_PREFIX}{offset:08d}.txt").write_text(blob, encoding="utf-8")
+            have[offset] = len(blob)
             got_chars += len(blob)
-            files += 1
-            log(f"  {got_chars / 1e6:6.1f} von {target_mb:.0f} MB")
+            new_files += 1
+            if int(got_chars / 1e6) > shown_mb or got_chars >= target_chars:
+                shown_mb = int(got_chars / 1e6)
+                log(f"  {got_chars / 1e6:6.1f} von {target_mb:g} MB")
         if pause_s:
-            time.sleep(pause_s)
-    return {"files": files, "chars": got_chars, "dir": str(out)}
+            sleep(pause_s)
+    return result()

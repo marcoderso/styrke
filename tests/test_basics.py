@@ -118,23 +118,94 @@ def test_corpus_reads_text_files_and_skips_headings(tmp_path):
     assert not corpus.builtin and len(corpus.paragraphs) == 1
 
 
+def _wiki_page(n_articles: int = 20) -> dict:
+    rows = [{"row": {"title": f"Artikel {i}", "text": "Satz mit Inhalt. " * 400}} for i in range(n_articles)]
+    rows.append({"row": {"title": "Stummel", "text": "zu kurz"}})
+    return {"rows": rows}
+
+
+def _is_first(url: str) -> bool:
+    return "length=1" in url.split("&") and "offset=0" in url.split("&")
+
+
 def test_fetch_wikipedia_writes_files_until_target(tmp_path):
     calls = []
 
     def fake(url: str) -> dict:
         calls.append(url)
-        if "length=1" in url and "offset=0" in url:
-            return {"num_rows_total": 2_800_000, "rows": []}
-        rows = [{"row": {"title": f"Artikel {i}", "text": "Satz mit Inhalt. " * 400}} for i in range(20)]
-        rows.append({"row": {"title": "Stummel", "text": "zu kurz"}})
-        return {"rows": rows}
+        return {"num_rows_total": 2_800_000, "rows": []} if _is_first(url) else _wiki_page()
 
     result = fetch_wikipedia(tmp_path, target_mb=0.3, fetch_json=fake, log=lambda _: None, pause_s=0)
-    assert result["chars"] >= 300_000 and result["files"] >= 2
+    assert result["chars"] >= 300_000 and result["files"] >= 2 and result["new_files"] == result["files"]
     assert "dataset=wikimedia%2Fwikipedia" in calls[0] and "config=20231101.de" in calls[0]
     corpus = Corpus.load(tmp_path)
     assert not corpus.builtin
     assert all("zu kurz" not in p for p in corpus.paragraphs)
+
+
+def test_fetch_wikipedia_resumes_and_survives_outages(tmp_path):
+    import urllib.error
+
+    state = {"down": 0, "page_calls": 0}
+    waits: list[float] = []
+
+    def fake(url: str) -> dict:
+        if state["down"] > 0:
+            state["down"] -= 1
+            raise urllib.error.HTTPError(url, 502, "Bad Gateway", None, None)
+        if _is_first(url):
+            return {"num_rows_total": 2_800_000, "rows": []}
+        state["page_calls"] += 1
+        return _wiki_page()
+
+    quiet = dict(fetch_json=fake, log=lambda _: None, pause_s=0, sleep=waits.append)
+
+    # Erster Abruf bis 0,3 MB.
+    first = fetch_wikipedia(tmp_path, target_mb=0.3, **quiet)
+    calls_first = state["page_calls"]
+
+    # Schon erreicht: keine einzige Anfrage.
+    again = fetch_wikipedia(tmp_path, target_mb=0.3, fetch_json=lambda url: 1 / 0, log=lambda _: None)
+    assert again["new_files"] == 0 and again["chars"] == first["chars"]
+
+    # Größeres Ziel, dazwischen sieben Ausfälle in Folge: der Abruf wartet mit
+    # wachsenden Pausen, lädt nichts doppelt und zählt das Vorhandene mit.
+    state["down"] = 7
+    second = fetch_wikipedia(tmp_path, target_mb=0.6, **quiet)
+    assert waits == [5, 10, 20, 40, 80, 120, 120]
+    assert second["files"] == first["files"] + second["new_files"]
+    assert state["page_calls"] - calls_first == second["new_files"]
+    assert 600_000 <= second["chars"] < 600_000 + 200_000
+
+
+def test_fetch_wikipedia_gives_up_with_usable_message(tmp_path):
+    import urllib.error
+
+    from styrke.corpus import CorpusError
+
+    served = {"n": 0}
+
+    def flaky(url: str) -> dict:
+        if _is_first(url):
+            return {"num_rows_total": 2_800_000, "rows": []}
+        served["n"] += 1
+        if served["n"] > 1:
+            raise urllib.error.HTTPError(url, 502, "Bad Gateway", None, None)
+        return _wiki_page()
+
+    with pytest.raises(CorpusError) as err:
+        fetch_wikipedia(tmp_path, target_mb=5, fetch_json=flaky, log=lambda _: None, pause_s=0, sleep=lambda _: None)
+    text = str(err.value)
+    assert "seit 10 Versuchen" in text and "(1 Datei)" in text and "setzt später dort fort" in text
+
+    # Abgelehnte Anfragen (falsche Adresse, kein Zugriff) enden sofort.
+    def denied(url: str) -> dict:
+        raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
+
+    waits: list[float] = []
+    with pytest.raises(CorpusError, match="lehnt die Anfrage ab"):
+        fetch_wikipedia(tmp_path / "leer", fetch_json=denied, log=lambda _: None, sleep=waits.append)
+    assert waits == []
 
 
 # -- Prompts ------------------------------------------------------------------

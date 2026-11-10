@@ -138,19 +138,23 @@ def cmd_corpus(args: argparse.Namespace) -> int:
 
     matrix = load_matrix(args.matrix)
     corpus_dir = matrix.host.corpus_dir
+    code = 0
     if args.action == "fetch":
-        print(f"Lade deutsche Wikipedia-Artikel nach {corpus_dir}/ (Ziel: {args.mb:.0f} MB)")
+        print(f"Lade deutsche Wikipedia-Artikel nach {corpus_dir}/ (Ziel: {args.mb:g} MB)")
         try:
             result = fetch_wikipedia(corpus_dir, target_mb=args.mb)
+            print(f"Fertig: {result['new_files']} neue Dateien, zusammen {result['chars'] / 1e6:.1f} MB")
         except CorpusError as exc:
             print(f"Fehler: {exc}", file=sys.stderr)
-            return 1
-        print(f"Fertig: {result['files']} Dateien, {result['chars'] / 1e6:.1f} MB")
+            code = 1
+        except KeyboardInterrupt:
+            print("Abgebrochen. Derselbe Aufruf setzt den Abruf fort.", file=sys.stderr)
+            code = 130
     info = Corpus.load(corpus_dir).info()
     print(f"Korpus: {info['source']}, {info['paragraphs']} Absätze, {info['chars'] / 1e6:.2f} MB")
     if info["builtin"]:
         print("Das ist der eingebaute Mini-Korpus. Er taugt nur für Funktionstests.")
-    return 0
+    return code
 
 
 # -- lastmodell ---------------------------------------------------------------

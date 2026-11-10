@@ -34,7 +34,9 @@ cp local.example.yaml local.yaml      # Pfade der Maschine eintragen
 
 `local.yaml` überschreibt einzelne Werte der Testmatrix und bleibt auf der Maschine (steht in `.gitignore`). Wichtig sind `host.models_dir` (dort liegen die Modellordner) und `host.cache_dir`.
 
-Falls `corpus fetch` die Quelle nicht erreicht: eigene deutsche Textdateien (`*.txt`, zusammen mindestens einige Megabyte) in den Ordner `corpus/` legen. Ohne Korpus greift ein eingebauter Mini-Korpus, der nur für Funktionstests taugt.
+`corpus fetch` lässt sich fortsetzen: Was schon im Ordner `corpus/` liegt, zählt mit und wird nicht erneut geladen. Antwortet die Quelle zeitweise nicht, wartet der Abruf mit wachsenden Pausen und gibt erst nach gut zehn Minuten auf; derselbe Aufruf macht später dort weiter. Ein Teilbestand ist bereits nutzbar, `styrke corpus info` zeigt seine Größe.
+
+Ist die Quelle gar nicht erreichbar: eigene deutsche Textdateien (`*.txt`, zusammen mindestens einige Megabyte) in den Ordner `corpus/` legen. Ohne Korpus greift ein eingebauter Mini-Korpus, der nur für Funktionstests taugt.
 
 ## Messen
 
