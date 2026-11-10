@@ -1,0 +1,16 @@
+# Messdaten, Korpus und Mitschriften bleiben auf der Maschine
+runs/
+corpus/
+usage/
+
+# Maschinenspezifische Einstellungen (Pfade, Adressen)
+local.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+build/
+dist/

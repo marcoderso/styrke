@@ -1,0 +1,24 @@
+# systemd-Dienst für den Mitschreiber (Vorlage).
+#
+# Anpassen: Pfade, die Adresse hinter --listen (dort, wo die Nutzer bisher die
+# Engine erreichen) und die Adresse hinter --upstream (dort, wo die Engine
+# jetzt lauscht). Dann:
+#   cp deploy/styrke-mitschreiber.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now styrke-mitschreiber
+
+[Unit]
+Description=styrke Mitschreiber (Längen und Zeiten, keine Inhalte)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/styrke
+ExecStart=/opt/styrke/.venv/bin/styrke mitschreiber serve \
+    --listen 127.0.0.1:8000 \
+    --upstream http://127.0.0.1:8001 \
+    --out /opt/styrke/usage
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

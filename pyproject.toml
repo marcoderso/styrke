@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "styrke"
+version = "0.1.0"
+description = "Mess-Harness für lokale LLM-Inferenz: Modelle, Engines und Konfigurationen vergleichbar messen"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "aiohttp>=3.9",
+    "PyYAML>=6.0",
+    "tokenizers>=0.15",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+styrke = "styrke.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]

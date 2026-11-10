@@ -1,0 +1,12 @@
+# Vorlage für local.yaml: maschinenspezifische Einstellungen.
+# Kopieren nach local.yaml (steht in .gitignore) und anpassen.
+# Alles hier Angegebene überschreibt den gleichnamigen Wert in matrix.yaml.
+
+host:
+  models_dir: /root/models/models   # Ordner, in dem z. B. Qwen3.8-Flash-Next-FP8/ liegt
+  cache_dir: /root/models/cache     # vorhandenen Kernel-Cache weiterverwenden spart das Übersetzen
+
+# Ein bereits gebautes FreeToken-Image weiterverwenden statt neu zu bauen:
+# engines:
+#   freetoken:
+#     image: local/freetoken:qwen38-flash-next

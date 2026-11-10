@@ -1,0 +1,142 @@
+# styrke-Testmatrix
+#
+# Sieben Zellen: Qwen3.8-Flash-Next nur mit FreeToken, die drei anderen Modelle
+# jeweils mit vLLM und SGLang. Alle Modelle im Gewichtsformat FP8.
+#
+# Maschinenspezifisches (Pfade, Adressen, ein schon gebautes Image) gehört in
+# local.yaml neben dieser Datei; Vorlage: local.example.yaml.
+
+host:
+  models_dir: /srv/models          # hier liegen die Modellordner
+  cache_dir: /srv/styrke/cache     # Kernel-Cache der Engines, bleibt zwischen Läufen erhalten
+  corpus_dir: corpus               # Texte für die Prompts (styrke corpus fetch)
+  runs_dir: runs                   # ein Unterordner je Lauf
+  bind: 127.0.0.1                  # die Engine lauscht während der Messung nur lokal
+  port: 18000
+
+engines:
+  freetoken:
+    kind: freetoken
+    image: styrke/freetoken:0.2.1  # bauen: docker build -t styrke/freetoken:0.2.1 engines/freetoken
+    container_port: 1919
+    ready_timeout_s: 2700          # erster Start: Kernels übersetzen und rund 173 GiB laden
+    docker:
+      mem_limit: 230g              # lieber Container-Abbruch als hängender Rechner
+      ipc: host
+      ulimits: {memlock: "-1"}     # Experten liegen in gepinntem RAM
+    base_args:
+      memory-ratio: 0.9
+      moe-strategy: offload        # ältere Versionen: moe-backend; der Adapter wählt die passende Schreibweise
+      enable-cache-report: true
+
+  # Die Adapter für vLLM und SGLang folgen in Schritt 2. Images werden dann
+  # auf feste Versionen gesetzt.
+  vllm:
+    kind: vllm
+    image: vllm/vllm-openai:latest
+    container_port: 8000
+  sglang:
+    kind: sglang
+    image: lmsysorg/sglang:latest
+    container_port: 30000
+
+models:
+  qwen38-flash-next:
+    repo: Qwen/Qwen3.8-Flash-Next-FP8
+    max_context: 262144
+    thinking:
+      "off": {body: {chat_template_kwargs: {enable_thinking: false}}}
+      "on": {body: {chat_template_kwargs: {enable_thinking: true}}}
+
+  gemma4-31b:
+    # Google veröffentlicht kein FP8; dies ist der FP8-Stand von Red Hat
+    # (Gewichte blockweise FP8, erstellt mit LLM Compressor).
+    repo: RedHatAI/gemma-4-31B-it-FP8-block
+    max_context: 262144
+    thinking:
+      "off": {}
+      "on": {system_prefix: "<|think|>"}
+
+  qwen36-35b-a3b:
+    repo: Qwen/Qwen3.6-35B-A3B-FP8
+    max_context: 262144
+    thinking:
+      "off": {body: {chat_template_kwargs: {enable_thinking: false}}}
+      "on": {body: {chat_template_kwargs: {enable_thinking: true}}}
+
+  qwen38-27b:
+    repo: Qwen/Qwen3.8-27B-FP8
+    max_context: 262144
+    thinking:
+      "off": {body: {chat_template_kwargs: {enable_thinking: false}}}
+      "on": {body: {chat_template_kwargs: {enable_thinking: true}}}
+
+cells:
+  - id: flashnext-freetoken
+    model: qwen38-flash-next
+    engine: freetoken
+    variants:
+      - id: basis
+        note: 8 parallele Anfragen, KV-Reserve für 4 x 256k; entspricht dem bisherigen Testbetrieb mit vollem Kontext
+        args: {max-running-requests: 8, kv-reserve-tokens: 1048576, max-seq-len-override: 262144}
+      - id: cache-gross
+        note: halbe KV-Reserve, dafür mehr Experten im VRAM
+        args: {max-running-requests: 8, kv-reserve-tokens: 524288, max-seq-len-override: 262144}
+      - id: kv-gross
+        note: doppelte KV-Reserve für 8 x 256k, dafür weniger Experten im VRAM
+        args: {max-running-requests: 16, kv-reserve-tokens: 2097152, max-seq-len-override: 262144}
+      - id: parallel-32
+        note: wie basis, aber 32 parallele Anfragen
+        args: {max-running-requests: 32, kv-reserve-tokens: 1048576, max-seq-len-override: 262144}
+
+  - id: gemma4-vllm
+    model: gemma4-31b
+    engine: vllm
+    enabled: false
+    note: Adapter folgt in Schritt 2
+  - id: gemma4-sglang
+    model: gemma4-31b
+    engine: sglang
+    enabled: false
+    note: Adapter folgt in Schritt 2
+  - id: qwen36-vllm
+    model: qwen36-35b-a3b
+    engine: vllm
+    enabled: false
+    note: Adapter folgt in Schritt 2
+  - id: qwen36-sglang
+    model: qwen36-35b-a3b
+    engine: sglang
+    enabled: false
+    note: Adapter folgt in Schritt 2
+  - id: qwen38-27b-vllm
+    model: qwen38-27b
+    engine: vllm
+    enabled: false
+    note: Adapter folgt in Schritt 2
+  - id: qwen38-27b-sglang
+    model: qwen38-27b
+    engine: sglang
+    enabled: false
+    note: Adapter folgt in Schritt 2
+
+# Lastmodell: von Berechtigten zu gleichzeitigen Anfragen.
+#   a = Anteil, der in der Spitzenstunde aktiv ist
+#   t = Nutzeraktionen je aktivem Nutzer in dieser Stunde
+#   k = Modellaufrufe je Aktion
+#   s = mittlere Bearbeitungszeit eines Aufrufs in Sekunden (Annahme, später Messwert)
+load_model:
+  entitled: 400
+  profiles:
+    zurueckhaltend: {a: 0.10, t: 6, k: 1.2, s: 20}
+    mittel: {a: 0.25, t: 10, k: 1.5, s: 30}
+    intensiv: {a: 0.40, t: 15, k: 2.0, s: 40}
+  session_mix:
+    kurzer_chat: {share: 0.60, max_tokens: 4000}
+    langer_chat: {share: 0.25, max_tokens: 32000}
+    dokumentarbeit: {share: 0.10, min_tokens: 64000, max_tokens: 256000}
+    agentenlauf: {share: 0.05}
+
+# Parameter der Stufen; nur angeben, was von den Standardwerten abweichen soll
+# (Standardwerte: src/styrke/config.py, DEFAULT_STAGES).
+stages: {}
