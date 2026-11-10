@@ -2,7 +2,7 @@
 
 styrke misst, wie gut ein Sprachmodell mit einer bestimmten Inferenz-Engine auf einer gegebenen Maschine arbeitet: Antwortzeiten, Durchsatz unter Last, Verhalten bei langen Prompts. Modelle, Engines und Konfigurationen stehen in einer Testmatrix; jede Kombination durchläuft dieselben Stufen, und alle Messwerte landen als Rohdaten je Anfrage auf der Platte.
 
-**Stand:** Alle Teile des Plans sind gebaut: die Testmatrix mit sieben Zellen, die Adapter für FreeToken, vLLM und SGLang, die Stufen 0 bis 8, der Betrachter für laufende Tests, der Bericht, die Blindbewertung und der Mitschreiber. An einer echten Engine gelaufen ist bisher nur FreeToken mit den Stufen 0 bis 2; alles andere ist gegen eine nachgebaute Engine geprüft, die Adapter für vLLM und SGLang nur gegen deren Dokumentation.
+**Stand:** Alle Teile des Plans sind gebaut: die Testmatrix mit sieben Zellen, die Adapter für FreeToken, vLLM und SGLang, die Stufen 0 bis 8, der Betrachter für laufende Tests, der Bericht, die Blindbewertung und der Mitschreiber. An einer echten Engine gestartet wurde bisher nur FreeToken mit den Stufen 0 bis 2; alles andere ist gegen eine nachgebaute Engine geprüft, die Adapter für vLLM und SGLang nur gegen deren Dokumentation.
 
 | Stufe | Frage | Stand | Dauer, grob |
 | --- | --- | --- | --- |
