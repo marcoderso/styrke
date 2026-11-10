@@ -123,7 +123,7 @@ class PromptBuilder:
         self.counter = counter
         self.overhead_tokens = overhead_tokens  # Tokens, die das Chat-Template selbst hinzufügt
 
-    def _document(self, rng: random.Random, n_tokens: int) -> str:
+    def document(self, rng: random.Random, n_tokens: int) -> str:
         """Korpustext mit genau ``n_tokens`` Tokens (soweit der Zähler es hergibt)."""
         if n_tokens <= 0:
             return ""
@@ -146,13 +146,13 @@ class PromptBuilder:
         summary_fixed = fixed + self.counter.count(header + SUMMARY_PREFIX + SUMMARY_SUFFIX)
         doc_tokens = target_tokens - summary_fixed
         if doc_tokens >= 60:
-            user = header + SUMMARY_PREFIX + self._document(rng, doc_tokens) + SUMMARY_SUFFIX
+            user = header + SUMMARY_PREFIX + self.document(rng, doc_tokens) + SUMMARY_SUFFIX
         else:
             task = ESSAY_TASK.format(topic=rng.choice(TOPICS))
             user = header + task
             rest = target_tokens - fixed - self.counter.count(user + ESSAY_CONTEXT)
             if rest >= 20:
-                user += ESSAY_CONTEXT + self._document(rng, rest)
+                user += ESSAY_CONTEXT + self.document(rng, rest)
 
         local = fixed + self.counter.count(user)
         return Prompt(

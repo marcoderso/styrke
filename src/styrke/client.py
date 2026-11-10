@@ -25,7 +25,7 @@ class RequestSpec:
     max_tokens: int
     body: dict[str, Any] = field(default_factory=dict)  # zusätzliche Felder im Anfragekörper
     tags: dict[str, Any] = field(default_factory=dict)  # wandern unverändert in den Datensatz
-    keep_text: bool = False
+    keep_text: bool = False  # Antworttext (ohne Nachdenken) im Feld ``_text`` zurückgeben
 
 
 def usage_fields(usage: dict[str, Any] | None) -> dict[str, Any]:
@@ -149,8 +149,8 @@ async def run_request(
     }
     chunk_ms: list[int] = []
     kinds: list[str] = []
-    texts: list[str] = []
-    need_text = spec.keep_text or count_tokens is not None
+    texts: list[str] = []  # alles Erzeugte, nur zum Zählen
+    answer: list[str] = []  # die eigentliche Antwort ohne Nachdenken
     usage: dict[str, Any] | None = None
     parser = SseParser()
     t0 = time.perf_counter()
@@ -178,7 +178,7 @@ async def run_request(
         if ttft is not None and ctok and ctok > 1 and total > ttft:
             rec["decode_tps"] = round((ctok - 1) / (total - ttft), 3)
         if spec.keep_text:
-            rec["_text"] = "".join(texts)
+            rec["_text"] = "".join(answer)
         return rec
 
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=15, sock_read=timeout_s)
@@ -218,8 +218,10 @@ async def run_request(
                     else:
                         kinds.append("t")
                     chunk_ms.append(int(now * 1000))
-                    if need_text:
-                        texts.append(reasoning or content)
+                    if count_tokens is not None:
+                        texts.append(reasoning + content)
+                    if spec.keep_text and content:
+                        answer.append(content)
             if rec["error"] is None:
                 rec["ok"] = bool(chunk_ms) or rec["finish_reason"] is not None
                 if not rec["ok"]:

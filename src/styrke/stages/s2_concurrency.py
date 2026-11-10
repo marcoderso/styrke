@@ -10,13 +10,12 @@ wächst der Durchsatz kaum noch, folgen zwei weitere Stufen, dann ist Schluss.
 from __future__ import annotations
 
 import asyncio
-import itertools
 import time
 from typing import Any
 
-from ..client import CancelledWithRecord, RequestSpec
 from ..stats import mean, percentile
 from .common import StageContext, ensure_calibrated, fmt
+from .load import ClosedLoop
 
 
 def window_throughput(
@@ -49,6 +48,11 @@ def summarize_level(
     cancelled = [r for r in records if r["error"] == "abgebrochen"]
     errors = [r for r in records if not r["ok"] and r["error"] != "abgebrochen"]
     in_window = [r for r in records if r["ok"] and w_start <= r["ts_submit"] < w_end]
+
+    def pct(key: str, q: float) -> float | None:
+        value = percentile([r[key] for r in in_window], q)
+        return None if value is None else round(value, 4)
+
     return {
         "level": n,
         "throughput_tps": round(mean(per_window) or 0.0, 2),
@@ -60,67 +64,31 @@ def summarize_level(
         "errors": len(errors),
         "cancelled": len(cancelled),
         "error_rate": round(len(errors) / len(records), 4) if records else 0.0,
-        "decode_tps_p50": percentile([r["decode_tps"] for r in in_window], 50),
-        "ttft_p50_s": percentile([r["ttft_s"] for r in in_window], 50),
-        "ttft_p95_s": percentile([r["ttft_s"] for r in in_window], 95),
-        "total_p50_s": percentile([r["total_s"] for r in in_window], 50),
-        "total_p95_s": percentile([r["total_s"] for r in in_window], 95),
+        "decode_tps_p50": pct("decode_tps", 50),
+        "ttft_p50_s": pct("ttft_s", 50),
+        "ttft_p95_s": pct("ttft_s", 95),
+        "total_p50_s": pct("total_s", 50),
+        "total_p95_s": pct("total_s", 95),
         "error_examples": sorted({r["error"] for r in errors if r["error"]})[:3],
     }
 
 
-async def run_level(ctx: StageContext, n: int, params: dict[str, Any]) -> dict[str, Any]:
-    stop = asyncio.Event()
-    records: list[dict[str, Any]] = []
-    seq = itertools.count()
-    thinking = params["thinking"]
-    body = ctx.body_for(thinking)
-    prefix = ctx.system_prefix_for(thinking)
-
-    async def worker(wid: int) -> None:
-        await asyncio.sleep(0.5 * wid / max(1, n))  # Starts leicht versetzen
-        while not stop.is_set():
-            prompt = ctx.builder.build(params["prompt_tokens"], seed=ctx.next_seed(), system_prefix=prefix)
-            spec = RequestSpec(
-                messages=prompt.messages,
-                max_tokens=params["max_tokens"],
-                body=body,
-                tags={
-                    "stage": 2,
-                    "level": n,
-                    "worker": wid,
-                    "seq": next(seq),
-                    "thinking": thinking,
-                    "prompt_target": params["prompt_tokens"],
-                    "prompt_local": prompt.local_tokens,
-                },
-            )
-            try:
-                rec = await ctx.request(spec)
-            except CancelledWithRecord as exc:
-                records.append(exc.record)
-                raise
-            records.append(rec)
-            if not rec["ok"]:
-                await asyncio.sleep(1.0)  # bei Fehlern nicht im Kreis rennen
-
-    tasks = [asyncio.create_task(worker(w)) for w in range(n)]
+async def run_level(
+    ctx: StageContext, n: int, params: dict[str, Any], stage: int = 2, tags: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Fährt eine Laststufe: Anlauf, Messfenster, Auslauf. Auch Stufe 3 nutzt das."""
+    loop = ClosedLoop(
+        ctx, n, stage=stage, prompt_tokens=params["prompt_tokens"], max_tokens=params["max_tokens"],
+        thinking=params["thinking"], tags=tags,
+    )
+    loop.start()
     try:
         await asyncio.sleep(params["warmup_s"])
         w_start = time.time()
         await asyncio.sleep(params["window_s"] * params["windows"])
-        stop.set()
-        _, pending = await asyncio.wait(tasks, timeout=params["drain_s"])
+        records = await loop.stop(params["drain_s"])
     finally:
-        stop.set()
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        outcomes = await asyncio.gather(*tasks, return_exceptions=True)
-        for outcome in outcomes:
-            if isinstance(outcome, Exception) and not isinstance(outcome, asyncio.CancelledError):
-                ctx.store.event("worker_error", stage=2, level=n, error=f"{type(outcome).__name__}: {outcome}")
-                ctx.log(f"  Arbeiter abgebrochen: {type(outcome).__name__}: {outcome}")
+        await loop.abort()
     return summarize_level(n, records, w_start, params["window_s"], params["windows"])
 
 

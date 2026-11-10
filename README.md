@@ -2,19 +2,21 @@
 
 styrke misst, wie gut ein Sprachmodell mit einer bestimmten Inferenz-Engine auf einer gegebenen Maschine arbeitet: Antwortzeiten, Durchsatz unter Last, Verhalten bei langen Prompts. Modelle, Engines und Konfigurationen stehen in einer Testmatrix; jede Kombination durchläuft dieselben Stufen, und alle Messwerte landen als Rohdaten je Anfrage auf der Platte.
 
-**Stand: Schritt 1 von 7.** Vorhanden sind das Gerüst, die Testmatrix, die Rohdatenablage, der Adapter für FreeToken, der Lastgenerator mit den Stufen 0 bis 2 und der Mitschreiber. Die Adapter für vLLM und SGLang, die Stufen 3 bis 8, die TUI und der Bericht folgen.
+**Stand:** Vorhanden sind die Testmatrix, die Rohdatenablage, der Adapter für FreeToken, die Leistungsstufen 0 bis 7 und der Mitschreiber. Es folgen die Adapter für vLLM und SGLang, die TUI, die Qualitätsstufe und der Bericht.
 
-| Stufe | Zweck | Stand |
-| --- | --- | --- |
-| 0 Machbarkeit | Lädt die Zelle, wie lange, welcher Kontext geht? | vorhanden |
-| 1 Einzelstrom | Grundwerte ohne Konkurrenz, über die Promptlänge | vorhanden |
-| 2 Parallelität | Verhalten unter steigender Dauerlast, bis zur Sättigung | vorhanden |
-| 3 KV-Füllstand | Einfluss eines vollen Cache | folgt |
-| 4 Präfix-Cache | Nutzen des Cache bei Folgefragen | folgt |
-| 5 Störwirkung | Was eine große Anfrage den anderen antut | folgt |
-| 6 Szenario | Tragfähigkeit im gemischten Betrieb | folgt |
-| 7 Dauerlauf | Stabilität | folgt |
-| 8 Qualität | Antwortgüte | folgt |
+| Stufe | Frage | Stand | Dauer, grob |
+| --- | --- | --- | --- |
+| 0 Machbarkeit | Lädt die Zelle, wie lange, welcher Kontext geht? | vorhanden | Ladezeit plus wenige Minuten |
+| 1 Einzelstrom | Wie schnell ist eine einzelne Anfrage, je nach Promptlänge? | vorhanden | 10 bis 30 Minuten |
+| 2 Parallelität | Wie viel Durchsatz bei steigender Dauerlast, bis zur Sättigung? | vorhanden | 20 Minuten |
+| 3 KV-Füllstand | Schadet ein voller Cache, und behält er wartende Gespräche? | vorhanden | 30 Minuten |
+| 4 Präfix-Cache | Wie viel schneller sind Folgefragen, und wie lange? | vorhanden | 30 Minuten |
+| 5 Störwirkung | Was tut eine große Anfrage den laufenden Chats an? | vorhanden | 10 Minuten |
+| 6 Szenario | Welche Last trägt die Zelle im gemischten Betrieb? | vorhanden | bis zu 2 Stunden |
+| 7 Dauerlauf | Bleibt sie über eine Stunde stabil? | vorhanden | 65 Minuten |
+| 8 Qualität | Wie gut sind die Antworten? | folgt | |
+
+Die Dauern sind aus den Parametern geschätzt, nicht gemessen; sie hängen vom Einlesetempo der Engine ab. Dazu kommt vor jeder Stufe die Ladezeit des Modells. Was jede Stufe genau tut und wie ihr Ergebnis zu lesen ist, steht in [docs/stufen.md](docs/stufen.md).
 
 ## Einrichten
 
@@ -56,32 +58,35 @@ Ist die Quelle gar nicht erreichbar: eigene deutsche Textdateien (`*.txt`, zusam
 
 Alle Kommandos im Ordner des Repositorys ausführen.
 
-**Funktionstest** gegen eine schon laufende Engine, ohne sie anzuhalten. Dauert etwa eine Minute und zeigt, ob alles zusammenspielt; die Zahlen sind keine Messung:
+**Funktionstest** gegen eine schon laufende Engine, ohne sie anzuhalten. Er fährt alle Stufen mit winzigen Parametern, dauert wenige Minuten und zeigt, ob alles zusammenspielt; die Zahlen sind keine Messung:
 
 ```bash
 .venv/bin/styrke run --cell flashnext-freetoken --endpoint http://127.0.0.1:8000 --smoke
 ```
 
-**Messlauf.** styrke startet die Engine selbst als Container, jede Stufe mit frisch gestarteter Engine. Die GPU muss dafür frei sein; ein anderer Dienst auf der Karte ist vorher zu stoppen. Der Lauf dauert bei einem großen Modell ein bis zwei Stunden, deshalb in `tmux` starten:
+**Messlauf.** styrke startet die Engine selbst als Container, jede Stufe mit frisch gestarteter Engine. Die GPU muss dafür frei sein; ein anderer Dienst auf der Karte ist vorher zu stoppen. Ohne `--stages` laufen alle Stufen, das dauert mehrere Stunden. Deshalb in `tmux` starten:
 
 ```bash
 tmux new -s styrke
-.venv/bin/styrke run --cell flashnext-freetoken --variant basis
+.venv/bin/styrke run --cell flashnext-freetoken --variant basis                 # alle Stufen
+.venv/bin/styrke run --cell flashnext-freetoken --variant basis --stages 0-2    # nur die ersten drei
 ```
 
 Danach:
 
 ```bash
 .venv/bin/styrke show runs/<laufordner>                               # Kurzauswertung
-.venv/bin/styrke run --cell flashnext-freetoken --resume runs/<laufordner>   # nach Abbruch fortsetzen
+.venv/bin/styrke run --cell flashnext-freetoken --resume runs/<laufordner>   # fortsetzen
 ```
+
+`--resume` überspringt abgeschlossene Stufen und fährt die übrigen im selben Laufordner. So lässt sich ein abgebrochener Lauf fortsetzen und ein Lauf mit den Stufen 0 bis 2 später um die Stufen 3 bis 7 ergänzen. Eine abgebrochene Stufe beginnt dabei von vorn.
 
 Nützliche Schalter von `styrke run`:
 
 | Schalter | Wirkung |
 | --- | --- |
 | `--variant ID` | Variante der Zelle; ohne Angabe die erste |
-| `--stages 0,1` | nur diese Stufen |
+| `--stages 0,1` oder `--stages 3-7` | nur diese Stufen; ohne Angabe alle |
 | `--endpoint URL` | an eine laufende Engine anhängen statt selbst zu starten |
 | `--smoke` | kleine Parameter für einen schnellen Funktionstest |
 | `--resume ORDNER` | abgeschlossene Stufen überspringen |
@@ -90,6 +95,8 @@ Nützliche Schalter von `styrke run`:
 Vor dem Start prüft styrke die Vorbereitung: Image vorhanden, Modell vorhanden, GPU frei. Fehlt etwas, nennt styrke alle Punkte auf einmal, legt keinen Laufordner an und endet mit dem Rückgabewert 3.
 
 Ein Fehlstart der Engine ist dagegen ein Ergebnis: Lädt eine Zelle nicht, steht der Grund in `feasibility.json`, und der Rückgabewert ist 2.
+
+Scheitert eine einzelne Stufe, laufen die übrigen trotzdem; ein langer Lauf über Nacht geht also nicht an einem Fehler in der Mitte verloren. Am Ende nennt styrke die nicht abgeschlossenen Stufen, `--resume` holt sie nach. Nach zwei Engine-Fehlern in Folge endet der Lauf. Ein Fehler in styrke selbst steht mit allen Einzelheiten in `stage_errors.log` im Laufordner; der Rückgabewert ist dann 1.
 
 ## Testmatrix
 
@@ -115,8 +122,8 @@ events.jsonl      Ereignisse (Stufen, Laststufen, Engine-Start)
 engine.log        Ausgabe der Engine
 feasibility.json  Ergebnis der Stufe 0
 calibration.json  Eichung der Promptlänge
-summary_s1.json   Kurzauswertung der Stufe 1
-summary_s2.json   Kurzauswertung der Stufe 2
+summary_sN.json   Kurzauswertung der Stufe N (1 bis 7)
+stage_errors.log  nur wenn eine Stufe an einem Fehler in styrke selbst gescheitert ist
 state.json        abgeschlossene Stufen
 answers/          Antworttexte, wo sie ausdrücklich aufbewahrt werden
 ```
@@ -156,4 +163,11 @@ rechnet aus der Zahl der Berechtigten und drei Nutzungsprofilen (Abschnitt `load
 .venv/bin/python -m pytest
 ```
 
-Die Tests brauchen weder GPU noch Docker. Sie laufen gegen eine Attrappe (`tests/mockserver.py`), die sich in den gemessenen Punkten wie eine Engine verhält: begrenztes Einlesetempo, Tokens mit einer Rate, eine Höchstzahl gleichzeitiger Anfragen mit Warteschlange.
+Die Tests brauchen weder GPU noch Docker. Sie laufen gegen eine Attrappe (`tests/mockserver.py`), die sich in den gemessenen Punkten wie eine Engine verhält: begrenztes Einlesetempo, Tokens mit einer Rate, eine Höchstzahl gleichzeitiger Anfragen mit Warteschlange, ein Präfix-Cache mit begrenztem Pool und Verdrängung.
+
+Alle Stufen von Hand gegen die Attrappe, in zwei Fenstern:
+
+```bash
+.venv/bin/python tests/mockserver.py
+.venv/bin/styrke run --cell flashnext-freetoken --endpoint http://127.0.0.1:18999 --smoke
+```

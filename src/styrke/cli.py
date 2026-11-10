@@ -39,10 +39,29 @@ def cmd_matrix(args: argparse.Namespace) -> int:
 # -- run ----------------------------------------------------------------------
 
 
+def parse_stages(text: str) -> list[int]:
+    """Macht aus ``0,2,4-6`` die Liste ``[0, 2, 4, 5, 6]``."""
+    stages: set[int] = set()
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            lo, hi = part.split("-", 1)
+            stages.update(range(int(lo), int(hi) + 1))
+        else:
+            stages.add(int(part))
+    return sorted(stages)
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     from .runner import RunOptions, run_cell
 
-    stages = sorted({int(s) for s in args.stages.split(",") if s.strip() != ""})
+    try:
+        stages = parse_stages(args.stages)
+    except ValueError:
+        print(f"Fehler: --stages versteht {args.stages!r} nicht (Beispiele: 0,1,2 oder 3-7)", file=sys.stderr)
+        return 1
     opts = RunOptions(
         matrix_path=args.matrix,
         cell_id=args.cell,
@@ -127,7 +146,128 @@ def cmd_show(args: argparse.Namespace) -> int:
                 f"{_fmt(row['ttft_p50_s'], 2):>9} {_fmt(row['ttft_p95_s'], 2):>9} {row['errors']:>7}"
             )
         print(f"  Ende der Stufe: {s2['stop_reason']}")
+
+    _show_later_stages(load)
     return 0
+
+
+def _pct(value: Any, digits: int = 0) -> str:
+    return "-" if value is None else f"{100 * value:.{digits}f} %"
+
+
+def _show_later_stages(load: Any) -> None:
+    """Kurzauswertungen der Stufen 3 bis 7."""
+    s3 = load("summary_s3.json")
+    if s3:
+        print("\nStufe 3, KV-Füllstand")
+        if s3.get("skipped"):
+            print(f"  ausgelassen: {s3['skipped']}")
+        else:
+            print(f"  KV-Pool {s3['pool_tokens']} Tokens, gehaltene Gespräche zu je {s3['session_tokens']} Tokens")
+            print(f"  {'Füllstand':>9} {'parallel':>9} {'tok/s gesamt':>13} {'TTFT p50':>9} {'TTFT p95':>9} {'Fehler':>7}")
+            for row in s3["rows"]:
+                print(
+                    f"  {_pct(row['fill']):>9} {row['level']:>9} {row['throughput_tps']:>13.1f} "
+                    f"{_fmt(row['ttft_p50_s'], 2):>9} {_fmt(row['ttft_p95_s'], 2):>9} {row['errors']:>7}"
+                )
+            for fill in s3["fills"]:
+                if not fill.get("probe_n"):
+                    continue
+                kept = fill["retained_by_ttft"] if fill["retained_by_ttft"] is not None else fill["retained_by_cache_report"]
+                print(
+                    f"  bei {_pct(fill['fill'])}: {fill['held_sessions']} Gespräche gehalten, nach der Last noch im Cache: "
+                    f"{_pct(kept)} (Folgefrage {_fmt(fill['probe_ttft_p50_s'], 2)} s, kalt {_fmt(fill['cold_ttft_p50_s'], 2)} s)"
+                )
+
+    s4 = load("summary_s4.json")
+    if s4:
+        print("\nStufe 4, Präfix-Cache (Zeit bis zum ersten Token, Mediane)")
+        print(f"  {'Prompt':>8} {'kalt s':>8} {'Folgefrage s':>13} {'Faktor':>7} {'aus Cache':>10} {'nach Pause s':>13}")
+        for row in s4["rows"]:
+            print(
+                f"  {row['prompt_target']:>8} {_fmt(row['cold_ttft_s'], 2):>8} {_fmt(row['followup_ttft_s'], 2):>13} "
+                f"{_fmt(row['speedup']):>7} {_pct(row['followup_cached_share']):>10} {_fmt(row['after_pause_ttft_s'], 2):>13}"
+            )
+        for skip in s4.get("skipped") or []:
+            print(f"  ausgelassen: {skip['prompt_target']} Tokens, {skip['reason']}")
+        eviction = s4.get("eviction") or {}
+        if eviction.get("skipped"):
+            print(f"  Verdrängung ausgelassen: {eviction['skipped']}")
+        for row in eviction.get("rows") or []:
+            print(
+                f"  Verdrängung, {row['prompt_target']} Tokens: kalt {_fmt(row['cold_ttft_s'], 2)} s, Folgefrage vorher "
+                f"{_fmt(row['before_ttft_s'], 2)} s, danach {_fmt(row['after_ttft_s'], 2)} s"
+            )
+
+    s5 = load("summary_s5.json")
+    if s5:
+        print(f"\nStufe 5, Störwirkung ({s5['chats']} laufende Chats)")
+        print(
+            f"  {'große Anfrage':>14} {'ihr TTFT s':>11} {'Chats tok/s vorher':>19} {'beim Einlesen':>14} "
+            f"{'Einbruch':>9} {'längste Pause s':>16}"
+        )
+        for row in s5["rows"]:
+            if not row["big_ok"]:
+                print(f"  {row['big_target']:>14} FEHLER: {row['big_error']}")
+                continue
+            base, prefill = row["baseline"] or {}, row["prefill"] or {}
+            slow = row["slowdown_prefill_pct"]
+            print(
+                f"  {row['big_target']:>14} {_fmt(row['big_ttft_s']):>11} {_fmt(base.get('tps')):>19} "
+                f"{_fmt(prefill.get('tps')):>14} {('-' if slow is None else f'{slow:.0f} %'):>9} "
+                f"{_fmt(prefill.get('silence_max_s'), 2):>16}"
+            )
+        for skip in s5.get("skipped") or []:
+            print(f"  ausgelassen: {skip['big_target']} Tokens, {skip['reason']}")
+
+    s6 = load("summary_s6.json")
+    if s6:
+        print("\nStufe 6, Szenario")
+        if s6.get("skipped"):
+            print(f"  ausgelassen: {s6['skipped']}")
+        else:
+            print(
+                f"  {'Aufrufe/s':>10} {'erreicht':>9} {'Aufrufe':>8} {'laufend':>8} {'TTFT p50':>9} {'TTFT p95':>9} "
+                f"{'Dauer p50':>10} {'tok/s':>7} {'Fehler':>7}  Urteil"
+            )
+            for row in s6["rows"]:
+                verdict = "getragen" if not row.get("overload") else "Überlast: " + "; ".join(row["overload"])
+                print(
+                    f"  {row['rate']:>10.2f} {row['achieved_rate']:>9.2f} {row['calls']:>8} {_fmt(row['inflight_mean']):>8} "
+                    f"{_fmt(row['ttft_p50_s'], 2):>9} {_fmt(row['ttft_p95_s'], 2):>9} {_fmt(row['total_p50_s']):>10} "
+                    f"{row['throughput_tps']:>7.0f} {row['errors']:>7}  {verdict}"
+                )
+            if s6.get("max_sustained_rate") is None:
+                print("  Ergebnis: schon die kleinste Rate wird nicht getragen")
+            else:
+                users = ", ".join(f"{name} {n}" for name, n in (s6.get("users_supported") or {}).items())
+                print(f"  Ergebnis: {s6['max_sustained_rate']:g} Aufrufe/s getragen. Berechtigte je Profil: {users}")
+            for drop in s6.get("sessions_dropped") or []:
+                print(f"  Sitzungsart {drop['kind']} entfiel: {drop['reason']}")
+
+    s7 = load("summary_s7.json")
+    if s7:
+        print("\nStufe 7, Dauerlauf")
+        if s7.get("skipped"):
+            print(f"  ausgelassen: {s7['skipped']}")
+        else:
+            overall, res = s7["overall"], s7["resources"]
+            print(f"  {s7['duration_s'] / 60:g} Minuten mit {s7['rate']:g} Aufrufen/s ({s7['rate_source']})")
+            print(
+                f"  Aufrufe {overall['calls']}, Fehler {overall['errors']}, TTFT p50 {_fmt(overall['ttft_p50_s'], 2)} s, "
+                f"p95 {_fmt(overall['ttft_p95_s'], 2)} s"
+            )
+            print(
+                f"  Veränderung vom ersten zum letzten Drittel: TTFT p95 {_fmt(s7['ttft_p95_drift_pct'], 0)} %, "
+                f"Durchsatz {_fmt(s7['throughput_drift_pct'], 0)} %"
+            )
+            print(
+                f"  GPU-Speicher {_fmt(res['gpu_mem_first_mib'], 0)} -> {_fmt(res['gpu_mem_last_mib'], 0)} MiB, "
+                f"freier Arbeitsspeicher {_fmt(res['host_mem_available_first_gib'])} -> "
+                f"{_fmt(res['host_mem_available_last_gib'])} GiB"
+            )
+            if overall.get("overload"):
+                print("  Hinweis: Überlast im Dauerlauf: " + "; ".join(overall["overload"]))
 
 
 # -- corpus -------------------------------------------------------------------
@@ -236,7 +376,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("run", help="Stufen einer Zelle fahren")
     p.add_argument("--cell", required=True, help="Zelle aus der Testmatrix")
     p.add_argument("--variant", help="Variante der Zelle (Standard: die erste)")
-    p.add_argument("--stages", default="0,1,2", help="Stufen, durch Komma getrennt (Standard: 0,1,2)")
+    p.add_argument("--stages", default="0-7", help="Stufen, z. B. 0,1,2 oder 3-7 (Standard: alle, 0-7)")
     p.add_argument("--endpoint", help="an eine laufende Engine anhängen, z. B. http://127.0.0.1:8000")
     p.add_argument("--model-name", help="Modellname an der Schnittstelle (bei --endpoint; sonst automatisch)")
     p.add_argument("--resume", metavar="LAUFORDNER", help="abgebrochenen Lauf fortsetzen")

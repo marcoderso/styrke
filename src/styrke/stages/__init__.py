@@ -1,11 +1,25 @@
-"""Teststufen. Schritt 1 enthält die Stufen 0 bis 2."""
+"""Teststufen 0 bis 7. Stufe 8 (Qualität) folgt."""
 
-from . import s0_feasibility, s1_single, s2_concurrency
+from . import (
+    s0_feasibility,
+    s1_single,
+    s2_concurrency,
+    s3_kvfill,
+    s4_prefix,
+    s5_interference,
+    s6_scenario,
+    s7_endurance,
+)
 
 STAGES = {
     0: ("Machbarkeit", s0_feasibility.run),
     1: ("Einzelstrom", s1_single.run),
     2: ("Parallelität", s2_concurrency.run),
+    3: ("KV-Füllstand", s3_kvfill.run),
+    4: ("Präfix-Cache", s4_prefix.run),
+    5: ("Störwirkung", s5_interference.run),
+    6: ("Szenario", s6_scenario.run),
+    7: ("Dauerlauf", s7_endurance.run),
 }
 
 __all__ = ["STAGES"]

@@ -1,4 +1,4 @@
-"""Tests gegen die Attrappe: Client, Stufen 0 bis 2, Ablaufsteuerung, Mitschreiber."""
+"""Tests gegen die Attrappe: Client, Stufen 0 bis 2, Ablaufsteuerung, Mitschreiber. Stufen 3 bis 7: test_stages.py."""
 
 from __future__ import annotations
 
@@ -121,7 +121,7 @@ def _run_smoke(tmp_path: Path, engine: MockEngine, **kwargs) -> tuple[int, Path]
 
 def test_stages_0_to_2_against_mock(tmp_path):
     engine = MockEngine(max_running=4, tokens_per_s=400)
-    code, run_dir = _run_smoke(tmp_path, engine)
+    code, run_dir = _run_smoke(tmp_path, engine, stages=[0, 1, 2])
     assert code == 0
     load = lambda name: json.loads((run_dir / name).read_text(encoding="utf-8"))  # noqa: E731
 
@@ -165,7 +165,7 @@ def test_stages_0_to_2_against_mock(tmp_path):
 
     # Fortsetzen: abgeschlossene Stufen werden nicht noch einmal gefahren.
     before = engine.requests
-    code, _ = _run_smoke(tmp_path, engine, resume=str(run_dir))
+    code, _ = _run_smoke(tmp_path, engine, resume=str(run_dir), stages=[0, 1, 2])
     assert code == 0 and engine.requests == before
 
 
@@ -304,3 +304,30 @@ def test_level_cancels_stragglers_and_keeps_their_partial_records(tmp_path):
     written = read_jsonl(tmp_path / "run" / "requests.jsonl")
     assert len(written) == row["requests"]
     assert sum(1 for r in written if r["error"] == "abgebrochen") == row["cancelled"]
+
+
+def test_failing_stage_does_not_stop_the_remaining_stages(tmp_path, monkeypatch):
+    import styrke.runner as runner
+
+    async def broken(ctx):
+        raise KeyError("absichtlich")
+
+    monkeypatch.setitem(runner.STAGES, 1, ("Kaputt", broken))
+    lines: list[str] = []
+    matrix = _matrix_for_test(tmp_path)
+
+    async def go():
+        async with Served(MockEngine().app()) as srv:
+            opts = RunOptions(
+                matrix_path=str(matrix), cell_id="flashnext-freetoken", endpoint=srv.url, smoke=True, stages=[0, 1, 2]
+            )
+            return await run_cell(opts, log=lines.append)
+
+    code = asyncio.run(go())
+    run_dir = next((tmp_path / "runs").iterdir())
+    assert code == 1
+    assert json.loads((run_dir / "state.json").read_text(encoding="utf-8"))["stages_done"] == [0, 2]
+    assert "KeyError" in (run_dir / "stage_errors.log").read_text(encoding="utf-8")
+    assert any("Nicht abgeschlossen: Stufe 1" in line for line in lines)
+    ends = [e for e in read_jsonl(run_dir / "events.jsonl") if e["kind"] == "stage_end"]
+    assert [(e["stage"], e["ok"]) for e in ends] == [(0, True), (1, False), (2, True)]

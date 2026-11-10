@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -10,7 +11,7 @@ import aiohttp
 from ..client import CancelledWithRecord, RequestSpec, complete, run_request
 from ..config import ModelConfig
 from ..engines.base import EngineAdapter
-from ..prompts import PromptBuilder
+from ..prompts import Prompt, PromptBuilder
 from ..store import RunStore
 
 
@@ -25,6 +26,8 @@ class StageContext:
     log: Callable[[str], None] = print
     usage_in_stream: bool = True
     attempt: int = 1  # der wievielte Anlauf dieser Stufe (nach einem Abbruch größer als 1)
+    load_model: dict[str, Any] = field(default_factory=dict)  # Abschnitt load_model der Testmatrix
+    kv_pool_tokens: int | None = None  # Größe des KV-Pools der Engine in Tokens, soweit bekannt
     _seed: int = field(default=0, repr=False)
 
     # -- Bausteine einer Anfrage ----------------------------------------
@@ -43,6 +46,32 @@ class StageContext:
     def next_seed(self) -> int:
         self._seed += 1
         return self._seed
+
+    async def build(self, target_tokens: int, **kwargs: Any) -> Prompt:
+        """Baut einen Prompt mit neuem Startwert.
+
+        Lange Prompts entstehen in einem Nebenthread: Das Zählen von einigen
+        hunderttausend Tokens dauert spürbar, und in dieser Zeit dürfen die
+        Zeitstempel gleichzeitig laufender Anfragen nicht stocken.
+        """
+        seed = self.next_seed()
+        if target_tokens < 4000:
+            return self.builder.build(target_tokens, seed=seed, **kwargs)
+        return await asyncio.to_thread(self.builder.build, target_tokens, seed=seed, **kwargs)
+
+    def prompt_limit(self) -> int:
+        """Größte Promptlänge, die nach Stufe 0 als lauffähig gilt."""
+        limit = self.model.max_context
+        probes = (self.store.read_json("feasibility.json") or {}).get("context_probes") or []
+        failed = [p["target"] for p in probes if p.get("ok") is False]
+        if failed:
+            ok = [p["target"] for p in probes if p.get("ok")]
+            limit = min(limit, max(ok) if ok else min(failed) - 1)
+        return limit
+
+    def fits(self, prompt_tokens: int, reserve_tokens: int = 0) -> bool:
+        """Passt ein Prompt samt ``reserve_tokens`` (Antworten, Folgefragen) in den Kontext?"""
+        return prompt_tokens <= self.prompt_limit() and prompt_tokens + reserve_tokens <= self.model.max_context
 
     def token_counter(self) -> Callable[[str], int] | None:
         """Zählfunktion für Antworten, falls die Engine keine Zählwerte mitliefert."""
@@ -125,7 +154,13 @@ async def calibrate(ctx: StageContext) -> dict[str, Any]:
 
 
 async def ensure_calibrated(ctx: StageContext, force: bool = False) -> dict[str, Any]:
-    """Eicht einmal je Lauf; spätere Stufen übernehmen die gespeicherten Werte."""
+    """Eicht einmal je Lauf; spätere Stufen übernehmen die gespeicherten Werte.
+
+    Übernimmt auch, was Stufe 0 über die Zählwerte im Stream herausgefunden
+    hat; das zählt, wenn eine spätere Stufe in einem eigenen Aufruf läuft.
+    """
+    if not force and (ctx.store.read_json("feasibility.json") or {}).get("usage_in_stream") is False:
+        ctx.usage_in_stream = False
     saved = None if force else ctx.store.read_json("calibration.json")
     if saved and saved.get("ok") and saved.get("counter") == ctx.builder.counter.kind:
         ctx.builder.overhead_tokens = int(saved.get("overhead_tokens") or 0)

@@ -58,6 +58,85 @@ DEFAULT_STAGES: dict[str, dict[str, Any]] = {
         "extra_levels_after_saturation": 2,
         "max_error_rate": 0.2,
     },
+    "s3": {
+        "fills": [0.0, 0.5, 0.9],  # Anteil des KV-Pools, den gehaltene Gespräche belegen
+        "pool_tokens": None,  # Größe des KV-Pools in Tokens; ohne Angabe aus den Startoptionen der Engine
+        "session_tokens": 32000,
+        "probe_sessions": 8,
+        "probe_max_tokens": 32,
+        "levels": [1, 4, 8, 16],
+        "prompt_tokens": 1000,
+        "max_tokens": 300,
+        "thinking": "off",
+        "warmup_s": 10,
+        "window_s": 30,
+        "windows": 2,
+        "drain_s": 120,
+    },
+    "s4": {
+        "lengths": [1000, 8000, 32000, 128000, 250000],
+        "reps": 3,
+        "max_tokens": 64,
+        "thinking": "off",
+        "pause_s": 120,  # Ruhezeit vor der zweiten Folgefrage, einmal je Promptlänge
+        "evict_lengths": [8000, 32000],
+        "evict_factor": 1.1,  # so viel vom KV-Pool geht als fremder Text durch die Engine
+        "evict_chunk_tokens": 32000,
+        "pool_tokens": None,
+    },
+    "s5": {
+        "chats": 8,
+        "prompt_tokens": 1000,
+        "max_tokens": 300,
+        "thinking": "off",
+        "big_lengths": [128000, 250000],
+        "big_max_tokens": 300,
+        "reps": 2,
+        "warmup_s": 15,
+        "baseline_s": 30,
+        "recovery_s": 30,
+        "drain_s": 120,
+    },
+    "s6": {
+        # Modellaufrufe pro Sekunde. Die Profile des Lastmodells liegen bei 0,08, 0,42 und 1,33.
+        "rates": [0.08, 0.15, 0.25, 0.42, 0.7, 1.0, 1.33],
+        "duration_s": 900,
+        # Bis die Folgefragen der ersten Gespräche eintreffen, liegt die Rate unter dem Sollwert.
+        "warmup_s": 180,
+        "drain_s": 180,
+        "pause_s": 10,
+        "thinking": "off",
+        "extra_levels_after_overload": 1,
+        "max_error_rate": 0.05,
+        "max_unfinished_rate": 0.1,
+        "backlog_factor": 1.5,
+        "backlog_slack": 4,
+        # Form der Sitzungsarten; ihre Anteile stehen in load_model.session_mix der Testmatrix.
+        # first_tokens und followup_tokens sind Spannen (von, bis), think_s die mittlere Pause vor einer Folgefrage.
+        "sessions": {
+            "kurzer_chat": {
+                "first_tokens": [200, 1500], "turns": 4, "followup_tokens": [20, 300], "max_tokens": 400, "think_s": 30,
+            },
+            "langer_chat": {
+                "first_tokens": [4000, 24000], "turns": 4, "followup_tokens": [20, 1000], "max_tokens": 500, "think_s": 45,
+            },
+            "dokumentarbeit": {
+                "first_tokens": [64000, 250000], "turns": 3, "followup_tokens": [20, 200], "max_tokens": 600, "think_s": 60,
+            },
+            # Werkzeugschleife: Züge ohne Pause, jeder bringt ein Werkzeugergebnis als neuen Text mit.
+            "agentenlauf": {
+                "first_tokens": [3000, 8000], "turns": 6, "followup_tokens": [300, 3000], "max_tokens": 200, "think_s": 0,
+            },
+        },
+    },
+    "s7": {
+        "duration_s": 3600,
+        "warmup_s": 180,
+        "drain_s": 180,
+        "bucket_s": 300,
+        "share_of_sustained": 0.7,
+        "rate": None,  # feste Rate in Aufrufen pro Sekunde; ohne Angabe aus Stufe 6
+    },
 }
 
 SMOKE_STAGES: dict[str, dict[str, Any]] = {
@@ -74,6 +153,55 @@ SMOKE_STAGES: dict[str, dict[str, Any]] = {
         "drain_s": 30,
         "pause_s": 0.5,
     },
+    "s3": {
+        "fills": [0.0, 0.5],
+        "pool_tokens": 16000,
+        "session_tokens": 2000,
+        "probe_sessions": 2,
+        "probe_max_tokens": 8,
+        "levels": [1, 4],
+        "prompt_tokens": 300,
+        "max_tokens": 48,
+        "warmup_s": 1,
+        "window_s": 3,
+        "windows": 1,
+        "drain_s": 30,
+    },
+    "s4": {
+        "lengths": [500, 2000],
+        "reps": 1,
+        "max_tokens": 16,
+        "pause_s": 1,
+        "evict_lengths": [1000],
+        "evict_chunk_tokens": 2000,
+        "pool_tokens": 12000,
+    },
+    "s5": {
+        "chats": 4,
+        "prompt_tokens": 300,
+        "max_tokens": 48,
+        "big_lengths": [3000],
+        "big_max_tokens": 48,
+        "reps": 1,
+        "warmup_s": 1,
+        "baseline_s": 3,
+        "recovery_s": 2,
+        "drain_s": 30,
+    },
+    "s6": {
+        "rates": [1.0, 2.0],
+        "duration_s": 12,
+        "warmup_s": 2,
+        "drain_s": 30,
+        "pause_s": 0.5,
+        "sessions": {
+            "kurzer_chat": {"first_tokens": [100, 300], "turns": 2, "followup_tokens": [20, 60], "max_tokens": 32, "think_s": 0.5},
+            "langer_chat": {"first_tokens": [500, 1500], "turns": 2, "followup_tokens": [20, 100], "max_tokens": 32, "think_s": 0.5},
+            "dokumentarbeit": {"first_tokens": [2000, 4000], "turns": 2, "followup_tokens": [20, 60], "max_tokens": 32, "think_s": 0.5},
+            "agentenlauf": {"first_tokens": [300, 600], "turns": 3, "followup_tokens": [50, 200], "max_tokens": 24, "think_s": 0},
+        },
+    },
+    "s7": {"duration_s": 15, "warmup_s": 2, "drain_s": 30, "bucket_s": 3},
 }
 
 

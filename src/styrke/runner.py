@@ -13,6 +13,7 @@ import platform
 import secrets
 import subprocess
 import time
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -24,7 +25,7 @@ from . import __version__
 from .client import RequestSpec
 from .config import ConfigError, Matrix, load_matrix
 from .corpus import Corpus
-from .engines import EngineAdapter, EngineError, ExternalEngine, SetupError, make_adapter
+from .engines import EngineAdapter, EngineError, ExternalEngine, SetupError, kv_pool_tokens, make_adapter
 from .prompts import PromptBuilder, make_counter
 from .sampler import GpuSampler, PeriodicSampler, gpu_snapshot, host_snapshot
 from .stages import STAGES
@@ -37,7 +38,7 @@ class RunOptions:
     matrix_path: str = "matrix.yaml"
     cell_id: str = ""
     variant_id: str | None = None
-    stages: list[int] = field(default_factory=lambda: [0, 1, 2])
+    stages: list[int] = field(default_factory=lambda: sorted(STAGES))  # ohne Angabe alle Stufen
     endpoint: str | None = None  # an eine laufende Engine anhängen statt selbst zu starten
     model_name: str | None = None
     resume: str | None = None
@@ -112,9 +113,11 @@ async def _warmup(ctx: StageContext, stage: int) -> None:
 async def run_cell(opts: RunOptions, log: Callable[[str], None] = print) -> int:
     """Fährt die gewählten Stufen.
 
-    Rückgabewert: 0 bei Erfolg, 2 bei einem Engine-Fehler (ein Messergebnis:
-    die Zelle lädt oder hält nicht), 3 wenn die Maschine nicht vorbereitet ist
-    (dann entsteht kein Laufordner).
+    Rückgabewert: 0 bei Erfolg, 1 wenn eine Stufe an einem Fehler in styrke
+    selbst scheiterte, 2 bei einem Engine-Fehler (ein Messergebnis: die Zelle
+    lädt oder hält nicht), 3 wenn die Maschine nicht vorbereitet ist (dann
+    entsteht kein Laufordner). Scheitert eine Stufe, laufen die übrigen
+    trotzdem, solange die Engine überhaupt lädt.
     """
     matrix = load_matrix(opts.matrix_path)
     cell = matrix.cell(opts.cell_id)
@@ -156,6 +159,8 @@ async def run_cell(opts: RunOptions, log: Callable[[str], None] = print) -> int:
 
     exit_code = 0
     started = False
+    failed: list[int] = []  # Stufen, die nicht zu Ende liefen
+    engine_failures = 0  # Engine-Fehler in Folge
     connector = aiohttp.TCPConnector(limit=0)
     async with aiohttp.ClientSession(connector=connector) as session:
         if adapter is None:
@@ -164,6 +169,7 @@ async def run_cell(opts: RunOptions, log: Callable[[str], None] = print) -> int:
             log(f"Hänge an laufende Engine an: {opts.endpoint} (Modell {served})")
         ctx = StageContext(
             store=store, adapter=adapter, session=session, model=model, params=params, builder=builder, log=log,
+            load_model=matrix.load_model, kv_pool_tokens=kv_pool_tokens(engine_cfg, variant),
             # Zufälliger Startwert: Prompts eines Laufs treffen nie den Präfix-Cache eines früheren Laufs.
             _seed=secrets.randbits(40) << 20,
         )
@@ -210,18 +216,38 @@ async def run_cell(opts: RunOptions, log: Callable[[str], None] = print) -> int:
                     await adapter.check_alive()
                     store.mark_stage_done(stage)
                     store.event("stage_end", stage=stage, ok=True, seconds=round(time.perf_counter() - t_stage, 1))
+                    engine_failures = 0
                 except EngineError as exc:
                     log(f"  ENGINE-FEHLER: {exc}")
                     store.event("stage_end", stage=stage, ok=False, error=str(exc))
-                    if not (store.read_json("feasibility.json") or {}).get("loaded"):
-                        store.write_json("feasibility.json", {"loaded": False, "error": str(exc)})
                     exit_code = 2
-                    break
+                    failed.append(stage)
+                    engine_failures += 1
+                    if not (store.read_json("feasibility.json") or {}).get("loaded"):
+                        # Die Zelle läuft gar nicht: Das ist ihr Ergebnis, weitere Stufen wären sinnlos.
+                        store.write_json("feasibility.json", {"loaded": False, "error": str(exc)})
+                        break
+                    if engine_failures >= 2:
+                        log("  Zwei Stufen in Folge sind an der Engine gescheitert; der Lauf endet hier.")
+                        break
+                    # Die Engine lief schon einmal: Die nächste Stufe bekommt einen frischen Start.
+                    if adapter.managed and started:
+                        await adapter.stop()
+                        started = False
+                except Exception as exc:  # Fehler in styrke selbst: festhalten, die übrigen Stufen trotzdem fahren
+                    with open(store.dir / "stage_errors.log", "a", encoding="utf-8") as fh:
+                        fh.write(f"===== Stufe {stage}, {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n{traceback.format_exc()}\n")
+                    log(f"  FEHLER in Stufe {stage}: {type(exc).__name__}: {exc} (Einzelheiten in stage_errors.log)")
+                    store.event("stage_end", stage=stage, ok=False, error=f"{type(exc).__name__}: {exc}")
+                    exit_code = exit_code or 1
+                    failed.append(stage)
         finally:
             if started:
                 log("Engine stoppt")
                 await adapter.stop()
             store.event("run_end", exit_code=exit_code)
             store.close()
+    if failed:
+        log(f"Nicht abgeschlossen: Stufe {', '.join(str(n) for n in failed)}. Nachholen mit --resume {store.dir}")
     log(f"Fertig. Rohdaten: {store.dir}")
     return exit_code
