@@ -137,7 +137,7 @@ class RunState:
         stage = e.get("stage")
         if kind == "run_start":
             self.planned = sorted(set(self.planned) | set(e.get("stages") or []))
-            self.t_run = self.t_run or ts
+            self.t_run = ts  # bei einem fortgesetzten Lauf zählt die Zeit ab dem Fortsetzen
             self.finished = None
         elif kind == "stage_start":
             self.current = stage
@@ -231,7 +231,7 @@ class RunState:
             "decode_tps": percentile([r["tps"] for r in rows], 50),
         }
 
-    def history(self, slices: int = 60) -> list[float]:
+    def history(self, slices: int = 40) -> list[float]:
         """Durchsatz der letzten Zeitscheiben in Tokens pro Sekunde, älteste zuerst."""
         last = int(self.now() // BIN_S) - 1
         for idx in [i for i in self.bins if i < last - 2 * slices]:
@@ -292,7 +292,7 @@ def render(state: RunState, log_lines: int = 8) -> Group:
     if state.load:
         live.add_row("An der Engine", f"{state.load.get('inflight')} Aufrufe laufen, {state.load.get('sessions')} Gespräche offen")
     history = state.history()
-    live.add_row("Durchsatz, 5 min", f"{sparkline(history)}  Spitze {_num(max(history, default=0.0), 0)} tok/s")
+    live.add_row("Durchsatz, 200 s", f"{sparkline(history)}  Spitze {_num(max(history, default=0.0), 0)} tok/s")
 
     machine = Table.grid(padding=(0, 2))
     machine.add_column(style="dim")
