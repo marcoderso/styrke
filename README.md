@@ -91,14 +91,14 @@ Danach:
 
 `--resume` überspringt abgeschlossene Stufen und fährt die übrigen im selben Laufordner. So lässt sich ein abgebrochener Lauf fortsetzen und ein Lauf mit den Stufen 0 bis 2 später um die Stufen 3 bis 7 ergänzen. Eine abgebrochene Stufe beginnt dabei von vorn.
 
-**Gesamtlauf über alle Zellen.** Ein Aufruf misst alle sieben Zellen nacheinander und schreibt am Ende den Bericht:
+**Gesamtlauf über alle Zellen.** Ein Aufruf erledigt alles: Er zieht fehlende Images, lädt fehlende Modelle herunter, misst alle sieben Zellen nacheinander und schreibt am Ende den Bericht.
 
 ```bash
 tmux new -s styrke
-.venv/bin/styrke all --vorbereiten
+.venv/bin/styrke all
 ```
 
-`--vorbereiten` zieht fehlende Images und lädt fehlende Modelle herunter, bevor die Messung beginnt; ohne den Schalter nennt styrke nur, was fehlt. Je Zelle läuft die erste Variante, mit `--varianten alle` jede. Vorhandene Läufe werden fortgesetzt und fertige übersprungen: Nach einem Abbruch genügt derselbe Aufruf noch einmal. Mit allen Stufen dauert eine Zelle etwa fünf Stunden, der Gesamtlauf also gut einen Tag; `--stages 0-2` liefert in wenigen Stunden einen ersten Vergleich, den ein späterer Aufruf ohne `--stages` vervollständigt. Mit `--cells a,b` lässt sich die Auswahl einschränken.
+Je Zelle läuft die erste Variante, mit `--varianten alle` jede. Vorhandene Läufe werden fortgesetzt und fertige übersprungen: Nach einem Abbruch genügt derselbe Aufruf noch einmal. Mit allen Stufen dauert eine Zelle etwa fünf Stunden, der Gesamtlauf also gut einen Tag; `--stages 0-2` liefert in wenigen Stunden einen ersten Vergleich, den ein späterer Aufruf ohne `--stages` vervollständigt. `--cells a,b` schränkt die Auswahl ein, `--nur-pruefen` zeigt nur, was noch fehlt.
 
 **Zusehen.** In einem zweiten Fenster zeigt der Betrachter den Stand des neuesten Laufs: Stufen mit Dauer und Fehlern, Durchsatz und Antwortzeiten der letzten 30 Sekunden, GPU, Arbeitsspeicher und das Protokoll. Er liest nur die Dateien des Laufordners, lässt sich jederzeit beenden und funktioniert auch für beendete Läufe.
 

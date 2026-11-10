@@ -111,12 +111,11 @@ def cmd_all(args: argparse.Namespace) -> int:
         import subprocess
 
         steps = preparation_steps(matrix, jobs)
-        if steps and not args.vorbereiten:
-            log("Nicht gestartet, es fehlt noch:")
+        if args.nur_pruefen:
+            log("Es fehlt nichts, der Gesamtlauf kann starten." if not steps else "Vor der Messung beschafft styrke noch:")
             for text, cmd in steps:
                 log(f"  {text}: {' '.join(cmd)}")
-            log("Mit --vorbereiten erledigt styrke das selbst und startet danach.")
-            return 3
+            return 0
         for text, cmd in steps:
             log(f"Vorbereitung: {text}")
             if subprocess.run(cmd).returncode != 0:
@@ -528,11 +527,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("run_dir", help="Laufordner unter runs/")
     p.set_defaults(func=cmd_show)
 
-    p = sub.add_parser("all", help="alle Zellen nacheinander messen und den Bericht schreiben")
+    p = sub.add_parser("all", help="alles in einem Aufruf: Fehlendes beschaffen, alle Zellen messen, Bericht schreiben")
     p.add_argument("--cells", help="nur diese Zellen, durch Komma getrennt (Standard: alle)")
     p.add_argument("--varianten", choices=["erste", "alle"], default="erste", help="je Zelle nur die erste Variante oder alle (Standard: erste)")
     p.add_argument("--stages", default="0-8", help="Stufen, z. B. 0-2 (Standard: alle, 0-8)")
-    p.add_argument("--vorbereiten", action="store_true", help="fehlende Images und Modelle vorher selbst beschaffen")
+    p.add_argument("--nur-pruefen", action="store_true", help="nur zeigen, welche Images und Modelle noch fehlen; nichts starten")
+    p.add_argument("--vorbereiten", action="store_true", help=argparse.SUPPRESS)  # früherer Schalter; die Vorbereitung läuft jetzt immer
     p.add_argument("--neu", action="store_true", help="vorhandene Läufe nicht fortsetzen, sondern neu beginnen")
     p.add_argument("--bericht", default="bericht.html", help="Zieldatei des Berichts am Ende (Standard: bericht.html)")
     p.add_argument("--smoke", action="store_true", help="kleine Parameter für einen schnellen Funktionstest")
