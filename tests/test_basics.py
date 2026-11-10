@@ -456,3 +456,70 @@ def test_engine_metrics_parsers():
     assert parsed['num_requests_running{model_name="styrke"}'] == 7.0 and len(parsed) == 3  # ohne Histogramm-Klassen
     assert vllm_kv_tokens(text) == 65536 * 16 and vllm_kv_tokens("nichts") is None
     assert _find_key({"a": [{"internal_states": [{"max_total_num_tokens": 900000}]}]}, "max_total_num_tokens") == 900000
+
+
+# -- Bericht --------------------------------------------------------------------
+
+
+def _fake_run(root: Path, name: str, cell: str, rates: list[tuple[float, float, list[str]]], loaded: bool = True) -> Path:
+    import json
+
+    run = root / name
+    run.mkdir(parents=True)
+
+    def dump(file: str, data: dict) -> None:
+        (run / file).write_text(json.dumps(data), encoding="utf-8")
+
+    dump("manifest.json", {"cell": cell, "variant": {"id": "basis"}, "model": {"repo": "x/y"}, "engine": {"image": "img"},
+                           "gpu": [{"name": "Testkarte", "mem_total_mib": 143771}]})
+    if not loaded:
+        dump("feasibility.json", {"loaded": False, "error": "CUDA out of memory"})
+        return run
+    dump("feasibility.json", {"loaded": True, "load_time_s": 312.0, "max_context_ok": 250011})
+    dump("summary_s1.json", {"rows": [
+        {"thinking": "off", "prompt_target": 1000, "n": 3, "n_ok": 3, "ttft_s": 0.21, "ttfc_s": 0.21, "decode_tps": 68.2, "prefill_tps": 4800.0},
+        {"thinking": "off", "prompt_target": 128000, "n": 3, "n_ok": 3, "ttft_s": 26.5, "ttfc_s": 26.5, "decode_tps": 61.0, "prefill_tps": 4830.0},
+    ]})
+    dump("summary_s2.json", {"rows": [
+        {"level": n, "throughput_tps": t, "decode_tps_p50": t / n, "ttft_p50_s": 0.3, "ttft_p95_s": 0.5, "errors": 0}
+        for n, t in ((1, 68.0), (4, 171.0), (8, 293.0))
+    ], "max_throughput_tps": 293.0, "max_throughput_level": 8, "saturated_at": None, "stop_reason": "alle Laststufen gefahren"})
+    rows = [
+        {"rate": rate, "achieved_rate": rate, "calls": 100, "errors": 0, "inflight_mean": 3.0, "ttft_p50_s": ttft / 3,
+         "ttft_p95_s": ttft, "total_p50_s": 9.0, "total_p95_s": 30.0, "throughput_tps": 120.0, "overload": overload,
+         "users_supported": {"mittel": int(rate * 960)}}
+        for rate, ttft, overload in rates
+    ]
+    carried = [r for r in rows if not r["overload"]]
+    dump("summary_s6.json", {"thinking": "off", "rows": rows, "max_sustained_rate": carried[-1]["rate"] if carried else None,
+                             "users_supported": {"mittel": int(carried[-1]["rate"] * 960)} if carried else None})
+    return run
+
+
+def test_report_compares_runs_and_applies_targets_afterwards(tmp_path):
+    from styrke.report import build_report, de, discover, key_figures, load_run, log_ticks, nice_ticks
+
+    assert de(1234567.891, 1) == "1.234.567,9" and de(None) == "–" and de(0.5, 2, " s") == "0,50 s"
+    assert nice_ticks(0, 100) == [0, 20, 40, 60, 80, 100] and log_ticks(0.05, 30) == [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20]
+
+    fast = _fake_run(tmp_path, "20261101-000000_a", "zelle-a", [(0.25, 1.0, []), (0.42, 2.5, []), (0.7, 9.0, ["Rückstau wächst"])])
+    _fake_run(tmp_path, "20261101-000000_b", "zelle-b", [(0.25, 4.0, []), (0.42, 20.0, ["Rückstau wächst"])])
+    _fake_run(tmp_path, "20261101-000000_c", "zelle-c", [], loaded=False)
+    newer = _fake_run(tmp_path, "20261102-000000_a", "zelle-a", [(0.25, 1.0, []), (0.42, 2.5, [])])
+    found = discover(tmp_path)
+    assert len(found) == 3 and newer in found and fast not in found  # je Zelle und Variante der neueste Lauf
+
+    opts = {"ttft_p95": 2.0, "total_p95": None, "cost_month": 9000.0, "profile": "mittel"}
+    figures = key_figures(load_run(fast), opts)
+    assert figures["sustained_rate"] == 0.42 and figures["users"] == 403
+    # Mit dem Zielwert von 2 s gilt nur noch die Rate 0,25; die Kosten je Berechtigtem beziehen sich darauf.
+    assert figures["target_rate"] == 0.25 and figures["users_target"] == 240
+    assert figures["cost_per_user"] == pytest.approx(9000 / 240)
+    assert figures["cost_per_mtok"] == pytest.approx(9000 / (293.0 * 30 * 24 * 3600 / 1e6))
+    assert key_figures(load_run(fast), {**opts, "ttft_p95": 0.5})["target_rate"] is None  # kein Abschnitt hält 0,5 s ein
+
+    page = build_report(found, opts)
+    for expected in ("zelle-a / basis", "zelle-b / basis", "lädt nicht", "CUDA out of memory", "Testkarte", "37,50 €",
+                     "Zielwert 2,0 s", "<svg", "Überlast: Rückstau wächst", "Rate mit Zielwert"):
+        assert expected in page, expected
+    assert page.count("<svg") == 3 and "http" not in page.replace("http-equiv", "")  # eine Datei ohne äußere Abhängigkeiten

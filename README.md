@@ -2,7 +2,7 @@
 
 styrke misst, wie gut ein Sprachmodell mit einer bestimmten Inferenz-Engine auf einer gegebenen Maschine arbeitet: Antwortzeiten, Durchsatz unter Last, Verhalten bei langen Prompts. Modelle, Engines und Konfigurationen stehen in einer Testmatrix; jede Kombination durchläuft dieselben Stufen, und alle Messwerte landen als Rohdaten je Anfrage auf der Platte.
 
-**Stand:** Vorhanden sind die Testmatrix, die Rohdatenablage, der Adapter für FreeToken, die Leistungsstufen 0 bis 7 und der Mitschreiber. Es folgen die Adapter für vLLM und SGLang, die TUI, die Qualitätsstufe und der Bericht.
+**Stand:** Vorhanden sind die Testmatrix mit sieben Zellen, die Adapter für FreeToken, vLLM und SGLang, die Leistungsstufen 0 bis 7, der Betrachter für laufende Tests, der Bericht und der Mitschreiber. Es folgt die Qualitätsstufe. An einer echten Engine gelaufen ist bisher nur FreeToken; die Adapter für vLLM und SGLang sind gegen die Dokumentation gebaut und ungeprüft.
 
 | Stufe | Frage | Stand | Dauer, grob |
 | --- | --- | --- | --- |
@@ -50,6 +50,16 @@ engines:
     image: <name>:<tag>
 ```
 
+Die Images für vLLM und SGLang werden gezogen, die Modelle einmal heruntergeladen:
+
+```bash
+docker pull vllm/vllm-openai:latest
+docker pull lmsysorg/sglang:latest
+hf download Qwen/Qwen3.8-27B-FP8 --local-dir <models_dir>/Qwen3.8-27B-FP8
+```
+
+Beide Images stehen in der Testmatrix auf `latest`, weil die Modelle neu sind. Für eine Messreihe das Image einmal ziehen und danach nicht erneuern; welches benutzt wurde, steht als `image_id` im Manifest jedes Laufs. Fehlt vor einem Lauf ein Image oder ein Modell, nennt styrke das passende Kommando.
+
 `corpus fetch` lässt sich fortsetzen: Was schon im Ordner `corpus/` liegt, zählt mit und wird nicht erneut geladen. Antwortet die Quelle zeitweise nicht, wartet der Abruf mit wachsenden Pausen und gibt erst nach gut zehn Minuten auf; derselbe Aufruf macht später dort weiter. Ein Teilbestand ist bereits nutzbar, `styrke corpus info` zeigt seine Größe.
 
 Ist die Quelle gar nicht erreichbar: eigene deutsche Textdateien (`*.txt`, zusammen mindestens einige Megabyte) in den Ordner `corpus/` legen. Ohne Korpus greift ein eingebauter Mini-Korpus, der nur für Funktionstests taugt.
@@ -81,6 +91,13 @@ Danach:
 
 `--resume` überspringt abgeschlossene Stufen und fährt die übrigen im selben Laufordner. So lässt sich ein abgebrochener Lauf fortsetzen und ein Lauf mit den Stufen 0 bis 2 später um die Stufen 3 bis 7 ergänzen. Eine abgebrochene Stufe beginnt dabei von vorn.
 
+**Zusehen.** In einem zweiten Fenster zeigt der Betrachter den Stand des neuesten Laufs: Stufen mit Dauer und Fehlern, Durchsatz und Antwortzeiten der letzten 30 Sekunden, GPU, Arbeitsspeicher und das Protokoll. Er liest nur die Dateien des Laufordners, lässt sich jederzeit beenden und funktioniert auch für beendete Läufe.
+
+```bash
+.venv/bin/styrke watch                    # neuester Lauf; beenden mit Strg+C
+.venv/bin/styrke watch runs/<laufordner> --once
+```
+
 Nützliche Schalter von `styrke run`:
 
 | Schalter | Wirkung |
@@ -98,6 +115,29 @@ Ein Fehlstart der Engine ist dagegen ein Ergebnis: Lädt eine Zelle nicht, steht
 
 Scheitert eine einzelne Stufe, laufen die übrigen trotzdem; ein langer Lauf über Nacht geht also nicht an einem Fehler in der Mitte verloren. Am Ende nennt styrke die nicht abgeschlossenen Stufen, `--resume` holt sie nach. Nach zwei Engine-Fehlern in Folge endet der Lauf. Ein Fehler in styrke selbst steht mit allen Einzelheiten in `stage_errors.log` im Laufordner; der Rückgabewert ist dann 1.
 
+## Bericht
+
+```bash
+.venv/bin/styrke report --out bericht.html
+.venv/bin/styrke report --ttft-p95 2 --kosten-monat 9000 --out bericht.html
+.venv/bin/styrke report runs/<lauf-a> runs/<lauf-b> --out vergleich.html
+```
+
+Der Bericht ist eine einzelne HTML-Datei ohne äußere Abhängigkeiten, die sich weitergeben und im Browser öffnen lässt. Ohne Angabe von Laufordnern nimmt er je Zelle und Variante den neuesten Lauf unter `runs/`; Funktionstests bleiben weg. Er enthält:
+
+- **Kennzahlen für die Entscheidung:** je Lauf Ladezeit, Tempo einer einzelnen Anfrage, höchster Durchsatz, Gewinn bei Folgefragen, Einbruch bei einer großen Anfrage, die getragene Rate und die Zahl der Berechtigten, die sie bedient.
+- **Diagramme:** Durchsatz über die Zahl gleichzeitiger Anfragen, Zeit bis zum ersten Token über die Promptlänge und über die Ankunftsrate.
+- **Alle Stufen je Lauf** als Tabellen, zum Aufklappen.
+
+Zielwerte und Kosten kommen nachträglich dazu; gemessen wird dafür nichts neu:
+
+| Schalter | Wirkung |
+| --- | --- |
+| `--ttft-p95 S` | nur Raten zählen, bei denen 95 % der Aufrufe ihr erstes Token nach höchstens S Sekunden haben |
+| `--dauer-p95 S` | ebenso für die Gesamtdauer eines Aufrufs |
+| `--kosten-monat EUR` | Monatskosten der Maschine; daraus Kosten je Berechtigtem und je Million Ausgabe-Tokens |
+| `--profil NAME` | Nutzungsprofil des Lastmodells für die Zahl der Berechtigten (Standard: `mittel`) |
+
 ## Testmatrix
 
 `matrix.yaml` hat fünf Abschnitte:
@@ -108,7 +148,9 @@ Scheitert eine einzelne Stufe, laufen die übrigen trotzdem; ein langer Lauf üb
 - `cells`: welches Modell auf welcher Engine läuft, mit Varianten. Die Angaben unter `args` einer Variante werden zu Optionen der Engine: `max-running-requests: 8` wird zu `--max-running-requests 8`.
 - `stages`: Parameter der Stufen, soweit sie von den Standardwerten abweichen sollen (Standardwerte: `DEFAULT_STAGES` in `src/styrke/config.py`).
 
-Beim FreeToken-Adapter gleicht styrke die Optionen vor dem Start mit `ft serve --help` des Images ab. Eine umbenannte Option (`moe-strategy` und `moe-backend`) wird passend gewählt, eine unbekannte führt zu einer klaren Fehlermeldung statt zu einem Container, der sofort wieder endet.
+Vor dem Start gleicht styrke die Optionen mit der Hilfe des Images ab. Eine unbekannte Option führt zu einer klaren Fehlermeldung statt zu einem Container, der sofort wieder endet; bei FreeToken wird eine umbenannte Option (`moe-strategy` und `moe-backend`) passend gewählt. Eine Option mit Fragezeichen am Ende (`"enable-metrics?": true`) ist ein Wunsch: Kennt das Image sie nicht, entfällt sie, und das Manifest nennt sie unter `dropped_flags`.
+
+Optionen, die ein Modell bei einer Engine braucht, stehen am Modell unter `engine_args`, etwa der Reasoning-Parser der Qwen-Modelle. Die Reihenfolge, in der sich Angaben überschreiben: Adapter, `base_args` der Engine, `engine_args` des Modells, `args` der Variante.
 
 ## Rohdaten
 
@@ -119,6 +161,7 @@ manifest.json     Hardware, Image, Modell, alle Startoptionen und Stufenparamete
 requests.jsonl    eine Zeile je Anfrage, mit Zeitstempeln der Antwortstücke
 samples.jsonl     GPU, Rechner und Engine in festen Abständen
 events.jsonl      Ereignisse (Stufen, Laststufen, Engine-Start)
+run.log           die Ausgabe von styrke run, für den Betrachter
 engine.log        Ausgabe der Engine
 feasibility.json  Ergebnis der Stufe 0
 calibration.json  Eichung der Promptlänge

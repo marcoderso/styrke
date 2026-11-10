@@ -311,13 +311,16 @@ def test_stage6_finds_sustained_rate_and_stage7_runs_at_a_share_of_it(tmp_path):
     load_samples = [s for s in read_jsonl(run_dir / "samples.jsonl") if s["kind"] == "load"]
     assert {s["rate"] for s in load_samples} == {4.0, 60.0}
 
-    # Stufe 7 im selben Laufordner: 70 % der getragenen Rate.
+    # Stufe 7 im selben Laufordner: 70 % der getragenen Rate. Wie im echten Lauf beginnt die Stufe mit einer
+    # frisch gestarteten Engine; die alte arbeitet noch den Rückstau der Überlast ab.
+    engine = MockEngine(max_running=2, tokens_per_s=200, prefill_tokens_per_s=50_000, max_context=20_000)
     code, _, load, _ = _run(tmp_path, engine, [6, 7], overrides, resume=str(run_dir))
     assert code == 0
     s7 = load("summary_s7.json")
     assert s7["rate"] == pytest.approx(0.7 * s6["max_sustained_achieved_rate"], abs=0.001)
     assert "Stufe 6" in s7["rate_source"] and len(s7["buckets"]) == 5
-    assert s7["overall"]["errors"] == 0 and s7["overall"]["calls"] == sum(b["calls"] for b in s7["buckets"])
+    assert s7["overall"]["errors"] == 0, s7["overall"]["error_examples"]
+    assert s7["overall"]["calls"] == sum(b["calls"] for b in s7["buckets"])
     assert "host_mem_available_first_gib" in s7["resources"]
     assert load("state.json")["stages_done"] == [6, 7]
 

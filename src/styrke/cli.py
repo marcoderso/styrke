@@ -283,6 +283,27 @@ def cmd_watch(args: argparse.Namespace) -> int:
     return watch(run_dir, refresh_s=args.interval, once=args.once)
 
 
+# -- report -------------------------------------------------------------------
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    from .report import build_report, discover
+
+    matrix = load_matrix(args.matrix)
+    run_dirs = [Path(p) for p in args.run_dirs] or discover(matrix.host.runs_dir, include_smoke=args.mit_funktionstests)
+    missing = [str(p) for p in run_dirs if not (p / "manifest.json").is_file()]
+    if missing or not run_dirs:
+        print("Fehler: " + (f"kein Laufordner: {', '.join(missing)}" if missing else "keine Läufe gefunden"), file=sys.stderr)
+        return 1
+    if args.profil not in (matrix.load_model.get("profiles") or {}):
+        print(f"Fehler: Profil {args.profil!r} steht nicht im Lastmodell der Testmatrix", file=sys.stderr)
+        return 1
+    opts = {"ttft_p95": args.ttft_p95, "total_p95": args.dauer_p95, "cost_month": args.kosten_monat, "profile": args.profil}
+    Path(args.out).write_text(build_report(run_dirs, opts), encoding="utf-8")
+    print(f"Bericht über {len(run_dirs)} Läufe geschrieben: {args.out}")
+    return 0
+
+
 # -- corpus -------------------------------------------------------------------
 
 
@@ -406,6 +427,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--interval", type=float, default=1.0, help="Sekunden zwischen zwei Aktualisierungen (Standard: 1)")
     p.add_argument("--once", action="store_true", help="den Stand einmal ausgeben und enden")
     p.set_defaults(func=cmd_watch)
+
+    p = sub.add_parser("report", help="Bericht (HTML) über einen oder mehrere Läufe schreiben")
+    p.add_argument("run_dirs", nargs="*", help="Laufordner; ohne Angabe je Zelle und Variante der neueste unter runs/")
+    p.add_argument("--out", default="bericht.html", help="Zieldatei (Standard: bericht.html)")
+    p.add_argument("--ttft-p95", type=float, help="Zielwert: Sekunden bis zum ersten Token, 95. Perzentil")
+    p.add_argument("--dauer-p95", type=float, help="Zielwert: Gesamtdauer eines Aufrufs in Sekunden, 95. Perzentil")
+    p.add_argument("--kosten-monat", type=float, help="Monatskosten der Maschine in Euro")
+    p.add_argument("--profil", default="mittel", help="Nutzungsprofil des Lastmodells für die Zahl der Berechtigten (Standard: mittel)")
+    p.add_argument("--mit-funktionstests", action="store_true", help="auch Läufe mit --smoke aufnehmen")
+    p.set_defaults(func=cmd_report)
 
     p = sub.add_parser("corpus", help="Textkorpus beschaffen oder anzeigen")
     p.add_argument("action", choices=["fetch", "info"])
