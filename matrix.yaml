@@ -80,9 +80,9 @@ models:
   qwen36-35b-a3b:
     repo: Qwen/Qwen3.6-35B-A3B-FP8
     max_context: 262144
-    engine_args:
-      vllm: {"reasoning-parser?": qwen3}
-      sglang: {"reasoning-parser?": qwen3}
+    engine_args:   # Nachdenken als eigenes Feld ausgeben, Werkzeugaufrufe erkennen (für Stufe 8)
+      vllm: {"reasoning-parser?": qwen3, "enable-auto-tool-choice?": true, "tool-call-parser?": hermes}
+      sglang: {"reasoning-parser?": qwen3, "tool-call-parser?": qwen}
     thinking:
       "off": {body: {chat_template_kwargs: {enable_thinking: false}}}
       "on": {body: {chat_template_kwargs: {enable_thinking: true}}}
@@ -90,9 +90,9 @@ models:
   qwen38-27b:
     repo: Qwen/Qwen3.8-27B-FP8
     max_context: 262144
-    engine_args:
-      vllm: {"reasoning-parser?": qwen3}
-      sglang: {"reasoning-parser?": qwen3}
+    engine_args:   # Nachdenken als eigenes Feld ausgeben, Werkzeugaufrufe erkennen (für Stufe 8)
+      vllm: {"reasoning-parser?": qwen3, "enable-auto-tool-choice?": true, "tool-call-parser?": hermes}
+      sglang: {"reasoning-parser?": qwen3, "tool-call-parser?": qwen}
     thinking:
       "off": {body: {chat_template_kwargs: {enable_thinking: false}}}
       "on": {body: {chat_template_kwargs: {enable_thinking: true}}}

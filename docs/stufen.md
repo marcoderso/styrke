@@ -112,4 +112,34 @@ Nach dem ersten nicht getragenen Abschnitt folgt noch einer zur Bestätigung, da
 
 ## Stufe 8, Qualität
 
-Folgt.
+**Frage:** Wie gut sind die Antworten?
+
+**Ablauf:** Jede Frage des Fragensatzes `quality/fragen.yaml` geht einmal ohne und einmal mit Nachdenken an das Modell. Die 26 Fragen verteilen sich auf sieben Kategorien:
+
+| Kategorie | Fragen | Prüfung |
+| --- | --- | --- |
+| `firmenwissen` | 5 | feste Begriffe, dazu von Hand |
+| `ehrlichkeit` | 4 | von Hand: Gibt das Modell zu, was es nicht wissen kann, statt etwas zu erfinden? |
+| `deutsch` | 4 | teils feste Begriffe, dazu von Hand; fremde Schriftzeichen werden gezählt |
+| `denken` | 6 | eindeutige Lösung, automatisch |
+| `langer_kontext` | 2 | eine Angabe in einem Text von 60.000 und 180.000 Tokens wiederfinden, automatisch |
+| `werkzeuge` | 4 | richtiges Werkzeug mit richtigen Angaben, automatisch |
+| `struktur` | 1 | gültiges JSON mit den verlangten Schlüsseln und Werten, automatisch |
+
+Anders als in den Leistungsstufen bleiben die Antworten erhalten: `answers/s8.jsonl` enthält je Frage die Antwort, die Referenzantwort und das Ergebnis der Prüfung.
+
+**Bewertung von Hand, blind:**
+
+```bash
+.venv/bin/styrke bewertung export --out bewertung            # neuester Lauf je Zelle und Variante
+.venv/bin/styrke bewertung import bewertung/bogen.csv bewertung/schluessel.json
+```
+
+`export` schreibt `bogen.csv` (Frage, Referenzantwort, Antwort, leere Spalte für 0 bis 3 Punkte) mit den Antworten aller Läufe in gemischter Reihenfolge und ohne Herkunft, dazu `anleitung.md` für die bewertende Person. `schluessel.json` ordnet die Zeilen den Läufen zu und bleibt beim Auftraggeber. `import` rechnet aus dem ausgefüllten Bogen mittlere Punkte je Lauf und Kategorie.
+
+**Zu beachten:**
+
+- Die Referenzantworten zum Firmenwissen stammen aus öffentlichen Quellen, die im Fragensatz genannt sind. Sie sollten vor der Bewertung von jemandem aus dem Unternehmen gegengelesen werden.
+- Die Werkzeuge sind nachgebaut: Geprüft wird, ob das Modell das richtige Werkzeug verlangt; ausgeführt wird nichts. Ob eine Engine Werkzeugaufrufe überhaupt erkennt, hängt von ihren Startoptionen ab (`engine_args` der Modelle in der Testmatrix). Lehnt sie ab, steht der Fehler im Ergebnis.
+- Jede Frage läuft einmal. Bei den eingestellten Sampling-Werten kann dieselbe Frage beim nächsten Mal anders ausgehen; knappe Unterschiede zwischen zwei Modellen sagen deshalb wenig.
+- Eine automatische Prüfung auf feste Begriffe ist streng in eine Richtung: Sie erkennt fehlende Angaben, aber keine zusätzlichen falschen. Dafür ist die Bewertung von Hand da.

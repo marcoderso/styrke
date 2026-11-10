@@ -53,6 +53,7 @@ class MockEngine:
         self.report_cached = report_cached
         self.prefill_slowdown = prefill_slowdown
         self.prefilling = 0
+        self.canned: dict[str, str] = {}  # Stichwort in der Frage -> feste Antwort (nur nicht gestreamt)
         self.cache: list[list] = []  # Einträge [Text, Tokens], der zuletzt genutzte am Ende
         self.evictions = 0
 
@@ -151,8 +152,16 @@ class MockEngine:
                     self.prefilling -= 1
                 self.cache_store(text, p_tokens)
                 if not body.get("stream"):
-                    await asyncio.sleep(max_tokens / self.tokens_per_s)
-                    text = " ".join(WORDS[i % len(WORDS)] for i in range(max_tokens))
+                    last = (messages[-1].get("content") or "") if messages else ""
+                    if body.get("tools") and "Lager" in last:  # nachgestellter Werkzeugaufruf
+                        call = {"type": "function", "function": {"name": "lagerbestand", "arguments": '{"artikel": "Harnstoff"}'}}
+                        return web.json_response(
+                            {"choices": [{"index": 0, "message": {"role": "assistant", "content": None, "tool_calls": [call]},
+                                          "finish_reason": "tool_calls"}], "usage": usage}
+                        )
+                    await asyncio.sleep(min(max_tokens, 40) / self.tokens_per_s)
+                    canned = next((answer for key, answer in self.canned.items() if key in last), None)
+                    text = canned or " ".join(WORDS[i % len(WORDS)] for i in range(min(max_tokens, 40)))
                     return web.json_response(
                         {
                             "choices": [{"index": 0, "message": {"role": "assistant", "content": text},

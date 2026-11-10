@@ -178,6 +178,7 @@ async def run_cell(opts: RunOptions, log: Callable[[str], None] = print) -> int:
         ctx = StageContext(
             store=store, adapter=adapter, session=session, model=model, params=params, builder=builder, log=log,
             load_model=matrix.load_model, kv_pool_tokens=kv_pool_tokens(engine_cfg, variant),
+            base_dir=Path(matrix.path).resolve().parent,
             # Zufälliger Startwert: Prompts eines Laufs treffen nie den Präfix-Cache eines früheren Laufs.
             _seed=secrets.randbits(40) << 20,
         )

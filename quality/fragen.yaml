@@ -1,0 +1,211 @@
+# Fragensatz der Qualitätsstufe (Stufe 8).
+#
+# Jede Frage hat eine Referenzantwort für die Bewertung von Hand und, wo es
+# geht, eine automatische Prüfung:
+#   muss:        Liste von Gruppen; aus jeder Gruppe muss ein Begriff vorkommen (Groß/klein egal)
+#   regex:       Muster, die alle passen müssen
+#   darf_nicht:  Begriffe, die nicht vorkommen dürfen
+#   werkzeug:    erwarteter Werkzeugaufruf (name, args) oder "keines"
+#   json:        die Antwort muss JSON mit diesen Schlüsseln (keys) und Werten (werte) sein
+#   nadel / kontext_tokens: Die Frage bekommt einen langen Text vorangestellt, in dem der Satz "nadel" steht
+#   pruefung: manuell   keine automatische Prüfung; zählt nur in der Bewertung von Hand
+#
+# Die Angaben zum Firmenwissen stammen aus öffentlichen Quellen (Stand November 2026):
+#   chemie.de, Lexikon, Eintrag "Stickstoffwerke Piesteritz"
+#   Nordkurier vom 18.07.2026, "Warum SKW Piesteritz für Europas Versorgung so wichtig ist"
+# Wer es besser weiß, korrigiert die Referenzantworten hier; die Messung ändert sich dadurch nicht.
+
+werkzeuge:
+  - name: lagerbestand
+    description: Liefert den aktuellen Lagerbestand eines Artikels in Tonnen.
+    parameters: {type: object, properties: {artikel: {type: string, description: Name des Artikels}}, required: [artikel]}
+  - name: termin_anlegen
+    description: Legt einen Termin im Kalender an.
+    parameters:
+      type: object
+      properties:
+        titel: {type: string}
+        datum: {type: string, description: "Datum im Format JJJJ-MM-TT"}
+        uhrzeit: {type: string, description: "Uhrzeit im Format HH:MM"}
+      required: [titel, datum, uhrzeit]
+  - name: wetter
+    description: Liefert die Wettervorhersage für einen Ort.
+    parameters: {type: object, properties: {ort: {type: string}, tag: {type: string, description: "heute oder morgen"}}, required: [ort]}
+
+fragen:
+  # -- Firmenwissen -----------------------------------------------------------
+  - id: firma-01
+    kategorie: firmenwissen
+    frage: Was ist SKW Piesteritz?
+    referenz: >-
+      Die SKW Stickstoffwerke Piesteritz GmbH ist ein Chemieunternehmen in Lutherstadt Wittenberg, Ortsteil
+      Piesteritz, in Sachsen-Anhalt. Nach eigenen Angaben ist sie Deutschlands größter Hersteller von Ammoniak
+      und Harnstoff. Daraus entstehen Stickstoffdünger, Harnstofflösung für AdBlue und Salpetersäure. Das
+      Unternehmen gehört zur tschechischen Agrofert-Gruppe.
+    muss: [[Wittenberg, Piesteritz], [Ammoniak, Harnstoff], [Dünge]]
+  - id: firma-02
+    kategorie: firmenwissen
+    frage: Wem gehört SKW Piesteritz?
+    referenz: Der tschechischen Agrofert-Gruppe. Sie stieg 2002 gemeinsam mit Ameropa ein und ist seit 2006 alleiniger Eigentümer.
+    muss: [[Agrofert]]
+  - id: firma-03
+    kategorie: firmenwissen
+    frage: Seit wann gibt es den Chemiestandort Piesteritz, und wie hieß das Werk bei seiner Gründung?
+    referenz: Seit 1915. Das Werk wurde im März 1915 als Reichsstickstoffwerke Piesteritz gegründet.
+    muss: [["1915"], [Reichsstickstoffwerk]]
+  - id: firma-04
+    kategorie: firmenwissen
+    frage: Welche Grundstoffe stellt SKW Piesteritz her, und wofür werden sie gebraucht?
+    referenz: >-
+      Ammoniak und Harnstoff. Daraus werden Stickstoffdünger für die Landwirtschaft, Harnstofflösung für AdBlue
+      zur Abgasreinigung von Dieselmotoren und Salpetersäure hergestellt.
+    muss: [[Ammoniak], [Harnstoff], [Dünge, AdBlue]]
+  - id: firma-05
+    kategorie: firmenwissen
+    frage: Warum trifft ein hoher Erdgaspreis ein Unternehmen wie SKW Piesteritz besonders hart?
+    referenz: >-
+      Erdgas ist dort nicht nur Energiequelle, sondern auch Rohstoff: Aus ihm wird der Wasserstoff gewonnen, der
+      mit Stickstoff aus der Luft zu Ammoniak reagiert. Die Herstellung ist sehr energieintensiv, der Gaspreis
+      bestimmt deshalb einen großen Teil der Kosten.
+    muss: [[Rohstoff, Wasserstoff, Ausgangsstoff], [Ammoniak]]
+
+  # -- Ehrlichkeit: zugeben, was man nicht wissen kann ----------------------------
+  - id: ehrlich-01
+    kategorie: ehrlichkeit
+    pruefung: manuell
+    frage: Wie hoch war der Umsatz von SKW Piesteritz im vergangenen Monat?
+    referenz: Das kann das Modell nicht wissen. Gut ist eine Antwort, die das sagt und keine Zahl erfindet; ein Hinweis, wo man die Zahl bekäme, ist ein Plus.
+  - id: ehrlich-02
+    kategorie: ehrlichkeit
+    pruefung: manuell
+    frage: Beschreibe die Eigenschaften des Produkts Piazol 9000 von SKW Piesteritz.
+    referenz: Dieses Produkt ist erfunden. Gut ist eine Antwort, die sagt, dass ihr das Produkt nicht bekannt ist, und keine Eigenschaften erfindet.
+  - id: ehrlich-03
+    kategorie: ehrlichkeit
+    pruefung: manuell
+    frage: Wer hat im Jahr 2031 den Nobelpreis für Chemie erhalten?
+    referenz: Das liegt in der Zukunft und ist nicht bekannt. Gut ist eine Antwort, die das sagt und keinen Namen nennt.
+  - id: ehrlich-04
+    kategorie: ehrlichkeit
+    pruefung: manuell
+    frage: Wie viele Mitarbeiter hat SKW Piesteritz heute genau?
+    referenz: Eine genaue aktuelle Zahl kann das Modell nicht kennen. Gut ist eine Antwort, die das sagt; eine ungefähre oder ältere Zahl ist in Ordnung, wenn sie als solche gekennzeichnet ist.
+
+  # -- Deutsch ---------------------------------------------------------------------
+  - id: deutsch-01
+    kategorie: deutsch
+    pruefung: manuell
+    frage: >-
+      Schreibe eine kurze Rundmail an alle Kolleginnen und Kollegen: Am Samstag sind wegen Wartungsarbeiten von
+      6 bis 10 Uhr die IT-Systeme nicht erreichbar. Höflich, sachlich, höchstens 120 Wörter.
+    referenz: Enthält Tag, Zeitraum und Grund, ist höflich und sachlich, bleibt unter 120 Wörtern, fehlerfreies Deutsch ohne fremde Schriftzeichen.
+  - id: deutsch-02
+    kategorie: deutsch
+    frage: Erkläre einem neuen Auszubildenden in einfachen Worten das Haber-Bosch-Verfahren. 150 bis 200 Wörter.
+    referenz: >-
+      Aus Stickstoff (aus der Luft) und Wasserstoff entsteht Ammoniak, bei hohem Druck und hoher Temperatur an einem
+      Katalysator. Ammoniak ist der Ausgangsstoff für Stickstoffdünger. Verständlich, richtig, im verlangten Umfang.
+    muss: [[Stickstoff], [Wasserstoff], [Ammoniak], [Katalysator, Druck]]
+  - id: deutsch-03
+    kategorie: deutsch
+    frage: >-
+      Korrigiere Rechtschreibung und Grammatik und gib nur den korrigierten Satz aus: "Wir haben gestern den Bericht
+      fertig gestelt und ihn an die Kolegen verschikt, weil die Frist morgen ableuft."
+    referenz: Wir haben gestern den Bericht fertiggestellt und ihn an die Kollegen verschickt, weil die Frist morgen abläuft.
+    muss: [[fertiggestellt], [Kollegen], [verschickt], [abläuft]]
+  - id: deutsch-04
+    kategorie: deutsch
+    pruefung: manuell
+    frage: >-
+      Fasse den folgenden Text in genau zwei Sätzen zusammen: "Die Wartung der Anlage war für das Frühjahr geplant.
+      Wegen fehlender Ersatzteile musste sie zweimal verschoben werden. Inzwischen sind alle Teile eingetroffen,
+      und die Arbeiten beginnen in der kommenden Woche. Während der Wartung, die voraussichtlich zehn Tage dauert,
+      steht die Anlage still."
+    referenz: Zwei Sätze, die Verschiebung wegen fehlender Teile, den Beginn in der kommenden Woche und den Stillstand von etwa zehn Tagen nennen.
+
+  # -- Denken: Aufgaben mit eindeutiger Lösung -------------------------------------------
+  - id: denken-01
+    kategorie: denken
+    frage: >-
+      Ein Tank fasst 12.000 Liter und ist zu 35 % gefüllt. Es fließen 150 Liter pro Minute zu und 60 Liter pro
+      Minute ab. Nach wie vielen Minuten ist der Tank voll?
+    referenz: Es fehlen 7.800 Liter, netto kommen 90 Liter pro Minute dazu, also 86,7 Minuten (86 Minuten und 40 Sekunden).
+    muss: [["86,6", "86.6", "86,7", "86.7", "87 Minuten", "86 Minuten und 40", "86 2/3", "rund 87", "etwa 87"]]
+  - id: denken-02
+    kategorie: denken
+    frage: >-
+      Anna arbeitet nie am selben Tag wie Bernd. Bernd arbeitet am Montag und am Mittwoch. Clara arbeitet nur an
+      Tagen, an denen auch Anna arbeitet. Kann Clara am Mittwoch arbeiten? Antworte zuerst mit Ja oder Nein.
+    referenz: Nein. Am Mittwoch arbeitet Bernd, also Anna nicht, also auch Clara nicht.
+    regex: ['^\W*nein']
+  - id: denken-03
+    kategorie: denken
+    frage: Ein Preis steigt erst um 20 % und sinkt danach um 20 %. Wie viel Prozent des ursprünglichen Preises beträgt er am Ende?
+    referenz: 96 %. Er liegt also 4 % unter dem ursprünglichen Preis.
+    muss: [["96"]]
+  - id: denken-04
+    kategorie: denken
+    frage: Harnstoff enthält 46 % Stickstoff. Wie viele Kilogramm Stickstoff stecken in 2,5 Tonnen Harnstoff?
+    referenz: 1.150 Kilogramm.
+    muss: [["1150", "1.150", "1 150", "1,15 Tonnen", "1,15 t"]]
+  - id: denken-05
+    kategorie: denken
+    frage: >-
+      Fünf Aufträge A, B, C, D und E sollen nacheinander bearbeitet werden. E kommt zuerst, D zuletzt, C kommt vor A,
+      und B folgt direkt auf A. Nenne die Reihenfolge.
+    referenz: E, C, A, B, D.
+    regex: ['E\W*C\W*A\W*B\W*D']
+  - id: denken-06
+    kategorie: denken
+    frage: "Antworte nur mit JA oder NEIN: Ist 91 eine Primzahl?"
+    referenz: NEIN (91 = 7 mal 13).
+    regex: ['^\W*nein']
+
+  # -- Langer Kontext: eine Angabe in einem langen Text wiederfinden -----------------------
+  - id: kontext-01
+    kategorie: langer_kontext
+    kontext_tokens: 60000
+    nadel: Die Freigabenummer für den Vorgang Nordlicht lautet 7Q4-KX-2291.
+    frage: Wie lautet die Freigabenummer für den Vorgang Nordlicht? Sie steht im Text oben.
+    referenz: 7Q4-KX-2291
+    muss: [["7Q4-KX-2291"]]
+  - id: kontext-02
+    kategorie: langer_kontext
+    kontext_tokens: 180000
+    nadel: Das Ersatzteil für die Pumpe im Abschnitt Süd hat die Bestellnummer PZ-58813-M.
+    frage: Welche Bestellnummer hat das Ersatzteil für die Pumpe im Abschnitt Süd? Sie steht im Text oben.
+    referenz: PZ-58813-M
+    muss: [["PZ-58813-M"]]
+
+  # -- Werkzeuge: das richtige Werkzeug mit den richtigen Angaben aufrufen ------------------
+  - id: werkzeug-01
+    kategorie: werkzeuge
+    frage: Wie viel Harnstoff haben wir noch auf Lager?
+    referenz: Ruft das Werkzeug lagerbestand mit dem Artikel Harnstoff auf.
+    werkzeug: {name: lagerbestand, args: {artikel: [Harnstoff]}}
+  - id: werkzeug-02
+    kategorie: werkzeuge
+    frage: Lege für den 14. Dezember 2026 um 9:30 Uhr einen Termin "Sicherheitsunterweisung" an.
+    referenz: Ruft termin_anlegen mit Titel Sicherheitsunterweisung, Datum 2026-12-14 und Uhrzeit 09:30 auf.
+    werkzeug: {name: termin_anlegen, args: {titel: [Sicherheitsunterweisung], datum: ["2026-12-14"], uhrzeit: ["09:30", "9:30"]}}
+  - id: werkzeug-03
+    kategorie: werkzeuge
+    frage: Wie wird das Wetter morgen in Wittenberg?
+    referenz: Ruft das Werkzeug wetter mit dem Ort Wittenberg auf.
+    werkzeug: {name: wetter, args: {ort: [Wittenberg]}}
+  - id: werkzeug-04
+    kategorie: werkzeuge
+    frage: Was ist die Hauptstadt von Frankreich?
+    referenz: Antwortet direkt mit Paris und ruft kein Werkzeug auf.
+    werkzeug: keines
+    muss: [[Paris]]
+
+  # -- Struktur: Ausgabe in vorgegebener Form ------------------------------------------
+  - id: struktur-01
+    kategorie: struktur
+    frage: >-
+      Gib die Angaben aus dem folgenden Satz als JSON mit genau den Schlüsseln lieferung, datum, menge_t, produkt,
+      kunde und preis_eur_je_t aus, ohne weiteren Text. Zahlen als Zahlen. Satz: "Lieferung 4711 vom 03.11.2026:
+      24 t Harnstoff an Agrarhandel Nord, Preis 412 Euro je Tonne."
+    referenz: '{"lieferung": 4711, "datum": "03.11.2026", "menge_t": 24, "produkt": "Harnstoff", "kunde": "Agrarhandel Nord", "preis_eur_je_t": 412}'
+    json: {keys: [lieferung, datum, menge_t, produkt, kunde, preis_eur_je_t], werte: {menge_t: 24, preis_eur_je_t: 412}}

@@ -2,7 +2,7 @@
 
 styrke misst, wie gut ein Sprachmodell mit einer bestimmten Inferenz-Engine auf einer gegebenen Maschine arbeitet: Antwortzeiten, Durchsatz unter Last, Verhalten bei langen Prompts. Modelle, Engines und Konfigurationen stehen in einer Testmatrix; jede Kombination durchläuft dieselben Stufen, und alle Messwerte landen als Rohdaten je Anfrage auf der Platte.
 
-**Stand:** Vorhanden sind die Testmatrix mit sieben Zellen, die Adapter für FreeToken, vLLM und SGLang, die Leistungsstufen 0 bis 7, der Betrachter für laufende Tests, der Bericht und der Mitschreiber. Es folgt die Qualitätsstufe. An einer echten Engine gelaufen ist bisher nur FreeToken; die Adapter für vLLM und SGLang sind gegen die Dokumentation gebaut und ungeprüft.
+**Stand:** Alle Teile des Plans sind gebaut: die Testmatrix mit sieben Zellen, die Adapter für FreeToken, vLLM und SGLang, die Stufen 0 bis 8, der Betrachter für laufende Tests, der Bericht, die Blindbewertung und der Mitschreiber. An einer echten Engine gelaufen ist bisher nur FreeToken mit den Stufen 0 bis 2; alles andere ist gegen eine nachgebaute Engine geprüft, die Adapter für vLLM und SGLang nur gegen deren Dokumentation.
 
 | Stufe | Frage | Stand | Dauer, grob |
 | --- | --- | --- | --- |
@@ -14,7 +14,7 @@ styrke misst, wie gut ein Sprachmodell mit einer bestimmten Inferenz-Engine auf 
 | 5 Störwirkung | Was tut eine große Anfrage den laufenden Chats an? | vorhanden | 10 Minuten |
 | 6 Szenario | Welche Last trägt die Zelle im gemischten Betrieb? | vorhanden | bis zu 2 Stunden |
 | 7 Dauerlauf | Bleibt sie über eine Stunde stabil? | vorhanden | 65 Minuten |
-| 8 Qualität | Wie gut sind die Antworten? | folgt | |
+| 8 Qualität | Wie gut sind die Antworten? | vorhanden | 10 bis 30 Minuten |
 
 Die Dauern sind aus den Parametern geschätzt, nicht gemessen; sie hängen vom Einlesetempo der Engine ab. Dazu kommt vor jeder Stufe die Ladezeit des Modells. Was jede Stufe genau tut und wie ihr Ergebnis zu lesen ist, steht in [docs/stufen.md](docs/stufen.md).
 
@@ -165,10 +165,10 @@ run.log           die Ausgabe von styrke run, für den Betrachter
 engine.log        Ausgabe der Engine
 feasibility.json  Ergebnis der Stufe 0
 calibration.json  Eichung der Promptlänge
-summary_sN.json   Kurzauswertung der Stufe N (1 bis 7)
+summary_sN.json   Kurzauswertung der Stufe N (1 bis 8)
 stage_errors.log  nur wenn eine Stufe an einem Fehler in styrke selbst gescheitert ist
 state.json        abgeschlossene Stufen
-answers/          Antworttexte, wo sie ausdrücklich aufbewahrt werden
+answers/          Antworttexte der Sinnprobe und der Qualitätsstufe (s8.jsonl)
 ```
 
 Die Felder beschreibt [docs/rohdaten.md](docs/rohdaten.md). Antworttexte werden bei den Leistungsstufen nicht gespeichert. Zielwerte wie eine Höchstzeit bis zum ersten Token lassen sich nachträglich auf die Rohdaten anwenden; neu gemessen werden muss dafür nichts.

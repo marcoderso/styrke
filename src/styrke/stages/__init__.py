@@ -1,4 +1,4 @@
-"""Teststufen 0 bis 7. Stufe 8 (Qualität) folgt."""
+"""Teststufen 0 bis 8."""
 
 from . import (
     s0_feasibility,
@@ -9,6 +9,7 @@ from . import (
     s5_interference,
     s6_scenario,
     s7_endurance,
+    s8_quality,
 )
 
 STAGES = {
@@ -20,6 +21,7 @@ STAGES = {
     5: ("Störwirkung", s5_interference.run),
     6: ("Szenario", s6_scenario.run),
     7: ("Dauerlauf", s7_endurance.run),
+    8: ("Qualität", s8_quality.run),
 }
 
 __all__ = ["STAGES"]

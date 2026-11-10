@@ -52,7 +52,7 @@ def _run(tmp_path: Path, engine: MockEngine, stages: list[int], overrides: dict,
 
 
 def test_all_stages_registered_and_stage_ranges_parse():
-    assert sorted(STAGES) == [0, 1, 2, 3, 4, 5, 6, 7]
+    assert sorted(STAGES) == [0, 1, 2, 3, 4, 5, 6, 7, 8]
     assert parse_stages("0,2,4-6") == [0, 2, 4, 5, 6] and parse_stages("3-7") == [3, 4, 5, 6, 7]
     with pytest.raises(ValueError):
         parse_stages("drei")
@@ -335,3 +335,76 @@ def test_stage7_needs_a_rate(tmp_path):
     code, _, load, _ = _run(tmp_path, engine, [7], over)
     s7 = load("summary_s7.json")
     assert code == 0 and s7["rate"] == 3.0 and s7["rate_source"] == "stages.s7.rate" and s7["overall"]["calls"] > 0
+
+
+# -- Stufe 8 -------------------------------------------------------------------
+
+
+def test_quality_checks():
+    from styrke.quality import check, extract_json, foreign_chars, load_questions
+
+    questions = {q["id"]: q for q in load_questions(REPO / "quality" / "fragen.yaml")["fragen"]}
+    assert len(questions) == 26 and {q["kategorie"] for q in questions.values()} == {
+        "firmenwissen", "ehrlichkeit", "deutsch", "denken", "langer_kontext", "werkzeuge", "struktur",
+    }
+    assert all(q.get("referenz") for q in questions.values())
+
+    good = check(questions["firma-01"], "Ein Chemiewerk in Wittenberg, das Ammoniak und Düngemittel herstellt.", [])
+    assert good["ok"] is True
+    bad = check(questions["firma-01"], "Ein Stahlwerk im Ruhrgebiet.", [])
+    assert bad["ok"] is False and len(bad["fehlt"]) == 3
+    assert check(questions["ehrlich-02"], "Das Produkt kenne ich nicht.", [])["ok"] is None  # nur von Hand
+    assert check(questions["denken-02"], "Nein. Bernd arbeitet am Mittwoch.", [])["ok"] is True
+    assert check(questions["denken-02"], "Ja, das geht.", [])["ok"] is False
+    assert check(questions["denken-05"], "Die Reihenfolge ist E → C → A → B → D.", [])["ok"] is True
+    assert check(questions["denken-04"], "Das sind 1.150 kg Stickstoff.", [])["ok"] is True
+
+    answer = '```json\n{"lieferung": 4711, "datum": "03.11.2026", "menge_t": 24, "produkt": "Harnstoff", "kunde": "Agrarhandel Nord", "preis_eur_je_t": 412}\n```'
+    assert extract_json(answer)["menge_t"] == 24 and check(questions["struktur-01"], answer, [])["ok"] is True
+    assert check(questions["struktur-01"], answer.replace("412", '"412 Euro"'), [])["ok"] is False
+
+    call = {"function": {"name": "termin_anlegen", "arguments": '{"titel": "Sicherheitsunterweisung", "datum": "2026-12-14", "uhrzeit": "09:30"}'}}
+    assert check(questions["werkzeug-02"], "", [call])["ok"] is True
+    wrong_day = {"function": {"name": "termin_anlegen", "arguments": '{"titel": "Sicherheitsunterweisung", "datum": "2026-12-15", "uhrzeit": "09:30"}'}}
+    assert check(questions["werkzeug-02"], "", [wrong_day])["ok"] is False
+    assert check(questions["werkzeug-04"], "Paris.", [])["ok"] is True
+    assert check(questions["werkzeug-04"], "Paris.", [call])["ok"] is False  # Werkzeug ohne Anlass
+    assert foreign_chars("Das ist обычный Text mit 中文.") == 9 and foreign_chars("Größe, Maß, café") == 0
+
+
+def test_stage8_runs_questions_and_blind_rating_roundtrip(tmp_path):
+    from styrke.quality import export_blind, import_blind
+
+    engine = MockEngine(max_context=20_000)
+    engine.canned = {"Freigabenummer": "Die Nummer lautet 7Q4-KX-2291.", "Hauptstadt": "Paris.", "Wem gehört": "Der Agrofert-Gruppe."}
+    # Ohne Fragensatz neben der Testmatrix wird die Stufe ausgelassen, mit klarem Grund.
+    code, _, load, _ = _run(tmp_path, engine, [8], {})
+    assert code == 0 and "Fragensatz nicht gefunden" in load("summary_s8.json")["skipped"]
+
+    over = {"s8": {"questions": str(REPO / "quality" / "fragen.yaml"), "thinking": ["off"],
+                   "max_tokens": {"off": 60, "on": 60}, "context_cap": 3000}}
+    code, run_dir, load, lines = _run(tmp_path, engine, [8], over)
+    assert code == 0
+    answers = {r["id"]: r for r in read_jsonl(run_dir / "answers" / "s8.jsonl")}
+    assert len(answers) == 26
+    assert answers["firma-02"]["check"]["ok"] is True and answers["firma-01"]["check"]["ok"] is False
+    assert answers["kontext-01"]["check"]["ok"] is True and answers["kontext-01"]["prompt_tokens"] > 2500  # Nadel im langen Text
+    assert answers["werkzeug-01"]["check"]["ok"] is True and answers["werkzeug-01"]["tool_calls"]
+    assert answers["werkzeug-04"]["check"]["ok"] is True and answers["ehrlich-01"]["check"]["ok"] is None
+    s8 = load("summary_s8.json")
+    assert s8["totals"]["off"]["auto_ok"] == 4 and s8["totals"]["off"]["auto_checked"] == 20
+    assert any("von Hand zu bewerten" in line for line in lines)
+
+    # Blindbewertung: Bogen ohne Herkunft, Schlüssel getrennt, Punkte zurück je Lauf und Kategorie.
+    out = tmp_path / "bewertung"
+    info = export_blind([run_dir], out, seed=1)
+    sheet = (out / "bogen.csv").read_text(encoding="utf-8-sig")
+    assert info == {"antworten": 19, "laeufe": 1} and run_dir.name not in sheet and "flashnext" not in sheet
+    assert "werkzeug-01" not in (out / "schluessel.json").read_text(encoding="utf-8")  # prüft styrke selbst
+    filled = "\n".join(
+        line if i == 0 else line.rsplit(";", 2)[0] + ";2;" for i, line in enumerate(sheet.splitlines()) if line.strip()
+    )
+    (out / "bogen.csv").write_text(filled, encoding="utf-8-sig")
+    result = import_blind(out / "bogen.csv", out / "schluessel.json")
+    assert result["laeufe"][run_dir.name]["mittel"] == 2.0 and result["laeufe"][run_dir.name]["n"] == 19
+    assert set(result["laeufe"][run_dir.name]["kategorien"]) == {"firmenwissen", "ehrlichkeit", "deutsch", "denken"}

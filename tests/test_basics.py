@@ -420,7 +420,9 @@ def test_vllm_command_and_flag_check():
     help_text = "--served-model-name --host --port --max-model-len --max-num-seqs --gpu-memory-utilization"
     dropped: list[str] = []
     resolved = resolve(engine.merged_args(), help_text, "img", dropped=dropped)
-    assert "reasoning-parser" not in resolved and sorted(dropped) == ["enable-prompt-tokens-details", "reasoning-parser"]
+    assert "reasoning-parser" not in resolved and sorted(dropped) == [
+        "enable-auto-tool-choice", "enable-prompt-tokens-details", "reasoning-parser", "tool-call-parser",
+    ]
     with pytest.raises(EngineError, match="--max-num-seqs"):
         resolve(engine.merged_args(), "--served-model-name --host --port --max-model-len --gpu-memory-utilization", "img")
 

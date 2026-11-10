@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 import aiohttp
@@ -28,6 +29,7 @@ class StageContext:
     attempt: int = 1  # der wievielte Anlauf dieser Stufe (nach einem Abbruch größer als 1)
     load_model: dict[str, Any] = field(default_factory=dict)  # Abschnitt load_model der Testmatrix
     kv_pool_tokens: int | None = None  # Größe des KV-Pools der Engine in Tokens, soweit bekannt
+    base_dir: Path = Path(".")  # Ordner der Testmatrix; relative Pfade aus den Parametern gelten ab hier
     _seed: int = field(default=0, repr=False)
 
     # -- Bausteine einer Anfrage ----------------------------------------

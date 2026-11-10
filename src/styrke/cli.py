@@ -269,6 +269,22 @@ def _show_later_stages(load: Any) -> None:
             if overall.get("overload"):
                 print("  Hinweis: Überlast im Dauerlauf: " + "; ".join(overall["overload"]))
 
+    s8 = load("summary_s8.json")
+    if s8:
+        print("\nStufe 8, Qualität")
+        if s8.get("skipped"):
+            print(f"  ausgelassen: {s8['skipped']}")
+        else:
+            print(f"  {'Nachdenken':<11} {'Kategorie':<16} {'Fragen':>7} {'geprüft':>8} {'bestanden':>10} {'von Hand':>9} {'Fehler':>7}")
+            for row in s8["rows"]:
+                print(
+                    f"  {row['thinking']:<11} {row['kategorie']:<16} {row['n']:>7} {row['auto_checked']:>8} "
+                    f"{row['auto_ok']:>10} {row['manual']:>9} {row['errors']:>7}"
+                )
+            for item in s8.get("failed") or []:
+                reason = item.get("error") or ("fehlt: " + "; ".join(item["fehlt"]) if item.get("fehlt") else "Prüfung nicht bestanden")
+                print(f"  nicht bestanden: {item['id']} (Nachdenken {item['thinking']}): {reason}")
+
 
 # -- watch --------------------------------------------------------------------
 
@@ -301,6 +317,37 @@ def cmd_report(args: argparse.Namespace) -> int:
     opts = {"ttft_p95": args.ttft_p95, "total_p95": args.dauer_p95, "cost_month": args.kosten_monat, "profile": args.profil}
     Path(args.out).write_text(build_report(run_dirs, opts), encoding="utf-8")
     print(f"Bericht über {len(run_dirs)} Läufe geschrieben: {args.out}")
+    return 0
+
+
+# -- bewertung ----------------------------------------------------------------
+
+
+def cmd_bewertung(args: argparse.Namespace) -> int:
+    from .quality import export_blind, import_blind
+    from .report import discover
+
+    if args.action == "export":
+        run_dirs = [Path(p) for p in args.paths] or discover(load_matrix(args.matrix).host.runs_dir)
+        result = export_blind(run_dirs, args.out, thinking=args.thinking)
+        if not result["antworten"]:
+            print("Fehler: In den Läufen liegen keine Antworten der Stufe 8 (answers/s8.jsonl).", file=sys.stderr)
+            return 1
+        print(f"{result['antworten']} Antworten aus {result['laeufe']} Läufen nach {args.out}/ geschrieben.")
+        print("bogen.csv und anleitung.md gehen an die bewertende Person, schluessel.json bleibt bei dir.")
+        return 0
+    if len(args.paths) != 2:
+        print("Aufruf: styrke bewertung import <bogen.csv> <schluessel.json>", file=sys.stderr)
+        return 1
+    result = import_blind(args.paths[0], args.paths[1])
+    Path(args.out).mkdir(parents=True, exist_ok=True)
+    (Path(args.out) / "bewertung.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"Skala: {result['skala']}")
+    for run, info in result["laeufe"].items():
+        cats = ", ".join(f"{cat} {c['mittel']:.2f}" for cat, c in info["kategorien"].items())
+        print(f"  {run}: Mittel {info['mittel']:.2f} aus {info['n']} Antworten ({cats})")
+    if result["ohne_punkte"]:
+        print(f"  {result['ohne_punkte']} Zeilen ohne Punkte blieben unberücksichtigt.")
     return 0
 
 
@@ -410,7 +457,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("run", help="Stufen einer Zelle fahren")
     p.add_argument("--cell", required=True, help="Zelle aus der Testmatrix")
     p.add_argument("--variant", help="Variante der Zelle (Standard: die erste)")
-    p.add_argument("--stages", default="0-7", help="Stufen, z. B. 0,1,2 oder 3-7 (Standard: alle, 0-7)")
+    p.add_argument("--stages", default="0-8", help="Stufen, z. B. 0,1,2 oder 3-7 (Standard: alle, 0-8)")
     p.add_argument("--endpoint", help="an eine laufende Engine anhängen, z. B. http://127.0.0.1:8000")
     p.add_argument("--model-name", help="Modellname an der Schnittstelle (bei --endpoint; sonst automatisch)")
     p.add_argument("--resume", metavar="LAUFORDNER", help="abgebrochenen Lauf fortsetzen")
@@ -437,6 +484,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--profil", default="mittel", help="Nutzungsprofil des Lastmodells für die Zahl der Berechtigten (Standard: mittel)")
     p.add_argument("--mit-funktionstests", action="store_true", help="auch Läufe mit --smoke aufnehmen")
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("bewertung", help="Blindbewertung der Antworten: Bogen ausgeben und ausgefüllt einlesen")
+    p.add_argument("action", choices=["export", "import"])
+    p.add_argument("paths", nargs="*", help="export: Laufordner (ohne Angabe die neuesten); import: bogen.csv schluessel.json")
+    p.add_argument("--out", default="bewertung", help="Ordner für Bogen und Ergebnis (Standard: bewertung)")
+    p.add_argument("--thinking", default="off", choices=["off", "on"], help="welche Antworten in den Bogen kommen (Standard: off)")
+    p.set_defaults(func=cmd_bewertung)
 
     p = sub.add_parser("corpus", help="Textkorpus beschaffen oder anzeigen")
     p.add_argument("action", choices=["fetch", "info"])

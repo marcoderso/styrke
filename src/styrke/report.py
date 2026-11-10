@@ -61,7 +61,7 @@ def load_run(run_dir: str | Path) -> dict[str, Any]:
         "smoke": bool(manifest.get("smoke")),
         "feasibility": load("feasibility.json"),
     }
-    for n in range(1, 8):
+    for n in range(1, 9):
         run[f"s{n}"] = load(f"summary_s{n}.json")
     run["label"] = f"{run['cell']} / {run['variant']}" if run["variant"] else run["cell"]
     return run
@@ -336,7 +336,32 @@ def decision_tables(runs: list[dict[str, Any]], figures: list[dict[str, Any]], o
     headers.append("Dauerlauf: Fehler und Veränderung")
     if opts["cost_month"]:
         headers += ["Kosten je Berechtigtem und Monat", "Kosten je Mio. Ausgabe-Tokens bei Dauerlast"]
-    return "<h3>Leistung</h3>" + perf + "<h3>Tragfähigkeit</h3>" + table(headers, cap_rows)
+    return "<h3>Leistung</h3>" + perf + "<h3>Tragfähigkeit</h3>" + table(headers, cap_rows) + quality_table(runs)
+
+
+def quality_table(runs: list[dict[str, Any]]) -> str:
+    """Automatisch geprüfte Fragen der Stufe 8 je Lauf; die Bewertung von Hand kommt aus ``styrke bewertung``."""
+    rows = []
+    for run in runs:
+        totals = (run["s8"] or {}).get("totals") or {}
+        if not totals:
+            continue
+        cells = [run["label"]]
+        for mode in ("off", "on"):
+            t = totals.get(mode)
+            cells.append(f"{t['auto_ok']} von {t['auto_checked']}" if t else "–")
+        cells.append(sum(t["with_foreign_chars"] for t in totals.values()))
+        failed = sorted({f["id"] for f in (run["s8"] or {}).get("failed", [])})
+        cells.append(", ".join(failed) or "keine")
+        rows.append(cells)
+    if not rows:
+        return ""
+    return (
+        "<h3>Qualität</h3><p>Automatisch prüfbare Fragen: Rechenaufgaben, Firmenwissen mit festen Begriffen, Angaben "
+        "aus langen Texten, Werkzeugaufrufe, JSON. Die übrigen Fragen bewertet ein Mensch blind.</p>"
+        + table(["Zelle / Variante", "bestanden ohne Nachdenken", "bestanden mit Nachdenken",
+                 "Antworten mit fremden Schriftzeichen", "nicht bestanden"], rows, text_columns=(4,))
+    )
 
 
 def charts(runs: list[dict[str, Any]], opts: dict[str, Any]) -> str:
