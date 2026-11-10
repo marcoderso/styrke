@@ -29,16 +29,34 @@ engines:
       moe-strategy: offload        # ältere Versionen: moe-backend; der Adapter wählt die passende Schreibweise
       enable-cache-report: true
 
-  # Die Adapter für vLLM und SGLang folgen in Schritt 2. Images werden dann
-  # auf feste Versionen gesetzt.
+  # vLLM und SGLang: Die Images stehen auf "latest", weil die Modelle neu sind.
+  # Die Kennung des tatsächlich benutzten Images steht im Manifest jedes Laufs
+  # (image_id). Für eine Messreihe das Image einmal ziehen und nicht mehr
+  # erneuern, oder hier eine feste Version eintragen.
+  # Optionen mit Fragezeichen sind Wünsche: Kennt das Image sie nicht, entfallen sie.
   vllm:
     kind: vllm
     image: vllm/vllm-openai:latest
     container_port: 8000
+    ready_timeout_s: 1800
+    docker: {ipc: host}
+    env: {HF_HUB_OFFLINE: "1"}
+    base_args:
+      gpu-memory-utilization: 0.92
+      max-num-seqs: 64
+      "enable-prompt-tokens-details?": true   # meldet Cache-Treffer je Anfrage
+
   sglang:
     kind: sglang
     image: lmsysorg/sglang:latest
     container_port: 30000
+    ready_timeout_s: 1800
+    docker: {ipc: host}
+    env: {HF_HUB_OFFLINE: "1"}
+    base_args:
+      max-running-requests: 64
+      "enable-metrics?": true
+      "enable-cache-report?": true            # meldet Cache-Treffer je Anfrage
 
 models:
   qwen38-flash-next:
@@ -53,6 +71,8 @@ models:
     # (Gewichte blockweise FP8, erstellt mit LLM Compressor).
     repo: RedHatAI/gemma-4-31B-it-FP8-block
     max_context: 262144
+    # Kein Reasoning-Parser eingetragen: Trennt die Engine das Nachdenken nicht ab, erscheint es
+    # als Teil der Antwort. Die Zeit bis zum ersten Token stimmt trotzdem.
     thinking:
       "off": {}
       "on": {system_prefix: "<|think|>"}
@@ -60,6 +80,9 @@ models:
   qwen36-35b-a3b:
     repo: Qwen/Qwen3.6-35B-A3B-FP8
     max_context: 262144
+    engine_args:
+      vllm: {"reasoning-parser?": qwen3}
+      sglang: {"reasoning-parser?": qwen3}
     thinking:
       "off": {body: {chat_template_kwargs: {enable_thinking: false}}}
       "on": {body: {chat_template_kwargs: {enable_thinking: true}}}
@@ -67,6 +90,9 @@ models:
   qwen38-27b:
     repo: Qwen/Qwen3.8-27B-FP8
     max_context: 262144
+    engine_args:
+      vllm: {"reasoning-parser?": qwen3}
+      sglang: {"reasoning-parser?": qwen3}
     thinking:
       "off": {body: {chat_template_kwargs: {enable_thinking: false}}}
       "on": {body: {chat_template_kwargs: {enable_thinking: true}}}
@@ -92,33 +118,75 @@ cells:
   - id: gemma4-vllm
     model: gemma4-31b
     engine: vllm
-    enabled: false
-    note: Adapter folgt in Schritt 2
+    variants:
+      - id: basis
+        note: 64 parallele Anfragen, Standardwerte von vLLM
+      - id: prefill-gross
+        note: größere Stücke beim Einlesen langer Prompts; schneller für die große Anfrage, härter für die anderen
+        args: {max-num-batched-tokens: 16384}
+      - id: parallel-128
+        note: 128 parallele Anfragen
+        args: {max-num-seqs: 128}
   - id: gemma4-sglang
     model: gemma4-31b
     engine: sglang
-    enabled: false
-    note: Adapter folgt in Schritt 2
+    variants:
+      - id: basis
+        note: 64 parallele Anfragen, Standardwerte von SGLang
+      - id: prefill-klein
+        note: kleinere Stücke beim Einlesen langer Prompts; schonender für die anderen, langsamer für die große Anfrage
+        args: {chunked-prefill-size: 2048}
+      - id: parallel-128
+        note: 128 parallele Anfragen
+        args: {max-running-requests: 128}
   - id: qwen36-vllm
     model: qwen36-35b-a3b
     engine: vllm
-    enabled: false
-    note: Adapter folgt in Schritt 2
+    variants:
+      - id: basis
+        note: 64 parallele Anfragen, Standardwerte von vLLM
+      - id: prefill-gross
+        note: größere Stücke beim Einlesen langer Prompts; schneller für die große Anfrage, härter für die anderen
+        args: {max-num-batched-tokens: 16384}
+      - id: parallel-128
+        note: 128 parallele Anfragen
+        args: {max-num-seqs: 128}
   - id: qwen36-sglang
     model: qwen36-35b-a3b
     engine: sglang
-    enabled: false
-    note: Adapter folgt in Schritt 2
+    variants:
+      - id: basis
+        note: 64 parallele Anfragen, Standardwerte von SGLang
+      - id: prefill-klein
+        note: kleinere Stücke beim Einlesen langer Prompts; schonender für die anderen, langsamer für die große Anfrage
+        args: {chunked-prefill-size: 2048}
+      - id: parallel-128
+        note: 128 parallele Anfragen
+        args: {max-running-requests: 128}
   - id: qwen38-27b-vllm
     model: qwen38-27b
     engine: vllm
-    enabled: false
-    note: Adapter folgt in Schritt 2
+    variants:
+      - id: basis
+        note: 64 parallele Anfragen, Standardwerte von vLLM
+      - id: prefill-gross
+        note: größere Stücke beim Einlesen langer Prompts; schneller für die große Anfrage, härter für die anderen
+        args: {max-num-batched-tokens: 16384}
+      - id: parallel-128
+        note: 128 parallele Anfragen
+        args: {max-num-seqs: 128}
   - id: qwen38-27b-sglang
     model: qwen38-27b
     engine: sglang
-    enabled: false
-    note: Adapter folgt in Schritt 2
+    variants:
+      - id: basis
+        note: 64 parallele Anfragen, Standardwerte von SGLang
+      - id: prefill-klein
+        note: kleinere Stücke beim Einlesen langer Prompts; schonender für die anderen, langsamer für die große Anfrage
+        args: {chunked-prefill-size: 2048}
+      - id: parallel-128
+        note: 128 parallele Anfragen
+        args: {max-running-requests: 128}
 
 # Lastmodell: von Berechtigten zu gleichzeitigen Anfragen.
 #   a = Anteil, der in der Spitzenstunde aktiv ist

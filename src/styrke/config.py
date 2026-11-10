@@ -248,6 +248,7 @@ class ModelConfig:
     max_context: int = 131072
     tokenizer: str = "tokenizer.json"
     thinking: dict[str, dict[str, Any]] = field(default_factory=dict)
+    engine_args: dict[str, dict[str, Any]] = field(default_factory=dict)  # Startoptionen je Engine-Art
 
     def thinking_mode(self, mode: str) -> dict[str, Any]:
         """Liefert ``{"body": {...}, "system_prefix": "..."}`` für ``off`` oder ``on``."""

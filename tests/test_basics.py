@@ -57,10 +57,9 @@ def test_describe_ignores_missing_values():
 # -- Testmatrix ---------------------------------------------------------------
 
 
-def test_matrix_has_seven_cells_and_one_enabled():
+def test_matrix_has_seven_cells():
     matrix = load_matrix(REPO / "matrix.yaml", local="/nonexistent")
     assert len(matrix.cells) == 7
-    assert [c.id for c in matrix.cells if c.enabled] == ["flashnext-freetoken"]
     cell = matrix.cell("flashnext-freetoken")
     assert [v.id for v in cell.variants] == ["basis", "cache-gross", "kv-gross", "parallel-32"]
     assert matrix.models["qwen38-flash-next"].dir == "Qwen3.8-Flash-Next-FP8"
@@ -394,3 +393,66 @@ def test_container_of_pid_reads_cgroup(monkeypatch):
     monkeypatch.setattr(d.Path, "read_text", read_text)
     assert d.container_of_pid("1", {cid: "dienst"}) == "dienst"
     assert d.container_of_pid("1", {}) is None
+
+
+# -- vLLM und SGLang ------------------------------------------------------------
+
+
+def _engine_for(cell_id: str, variant: str):
+    from styrke.engines import make_adapter
+
+    matrix = load_matrix(REPO / "matrix.yaml", local="/nonexistent")
+    cell = matrix.cell(cell_id)
+    return make_adapter(matrix.host, matrix.engines[cell.engine], matrix.models[cell.model], cell.variant(variant))
+
+
+def test_vllm_command_and_flag_check():
+    from styrke.engines.flags import resolve_flags as resolve
+
+    engine = _engine_for("qwen38-27b-vllm", "parallel-128")
+    joined = " ".join(engine.build_command())
+    assert "--entrypoint vllm" in joined and "-p 127.0.0.1:18000:8000" in joined and "-e HF_HUB_OFFLINE=1" in joined
+    assert "vllm/vllm-openai:latest serve /models/Qwen3.8-27B-FP8 " in joined
+    assert "--max-model-len 262144" in joined and "--max-num-seqs 128" in joined and "--max-num-seqs 64" not in joined
+    assert "--reasoning-parser qwen3" in joined and "--enable-prompt-tokens-details" in joined and "?" not in joined
+
+    # Abgleich mit der Hilfe: Wünsche, die das Image nicht kennt, entfallen; Pflichtangaben führen zum Fehler.
+    help_text = "--served-model-name --host --port --max-model-len --max-num-seqs --gpu-memory-utilization"
+    dropped: list[str] = []
+    resolved = resolve(engine.merged_args(), help_text, "img", dropped=dropped)
+    assert "reasoning-parser" not in resolved and sorted(dropped) == ["enable-prompt-tokens-details", "reasoning-parser"]
+    with pytest.raises(EngineError, match="--max-num-seqs"):
+        resolve(engine.merged_args(), "--served-model-name --host --port --max-model-len --gpu-memory-utilization", "img")
+
+
+def test_sglang_command_and_gemma_without_reasoning_parser():
+    engine = _engine_for("gemma4-sglang", "prefill-klein")
+    joined = " ".join(engine.build_command())
+    assert "--entrypoint python3" in joined and "lmsysorg/sglang:latest -m sglang.launch_server " in joined
+    assert "--model-path /models/gemma-4-31B-it-FP8-block" in joined and "--context-length 262144" in joined
+    assert "--chunked-prefill-size 2048" in joined and "--max-running-requests 64" in joined
+    assert "--enable-metrics" in joined and "reasoning-parser" not in joined
+
+
+def test_all_cells_are_enabled_and_have_adapters():
+    matrix = load_matrix(REPO / "matrix.yaml", local="/nonexistent")
+    assert len(matrix.cells) == 7 and all(c.enabled and c.variants for c in matrix.cells)
+    for cell in matrix.cells:
+        assert _engine_for(cell.id, cell.variants[0].id).build_command()[0] == "docker"
+
+
+def test_engine_metrics_parsers():
+    from styrke.engines.probes import _find_key, parse_prometheus, vllm_kv_tokens
+
+    text = (
+        "# HELP vllm:num_requests_running x\n"
+        'vllm:num_requests_running{model_name="styrke"} 7.0\n'
+        'vllm:kv_cache_usage_perc{model_name="styrke"} 0.42\n'
+        'vllm:time_to_first_token_seconds_bucket{le="0.1",model_name="styrke"} 3.0\n'
+        'vllm:cache_config_info{block_size="16",num_gpu_blocks="65536",enable_prefix_caching="True"} 1.0\n'
+        "python_gc_objects_collected_total 5\n"
+    )
+    parsed = parse_prometheus(text, "vllm:")
+    assert parsed['num_requests_running{model_name="styrke"}'] == 7.0 and len(parsed) == 3  # ohne Histogramm-Klassen
+    assert vllm_kv_tokens(text) == 65536 * 16 and vllm_kv_tokens("nichts") is None
+    assert _find_key({"a": [{"internal_states": [{"max_total_num_tokens": 900000}]}]}, "max_total_num_tokens") == 900000

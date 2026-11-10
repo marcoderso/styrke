@@ -331,3 +331,33 @@ def test_failing_stage_does_not_stop_the_remaining_stages(tmp_path, monkeypatch)
     assert any("Nicht abgeschlossen: Stufe 1" in line for line in lines)
     ends = [e for e in read_jsonl(run_dir / "events.jsonl") if e["kind"] == "stage_end"]
     assert [(e["stage"], e["ok"]) for e in ends] == [(0, True), (1, False), (2, True)]
+
+
+def test_watch_shows_progress_of_a_run(tmp_path):
+    from rich.console import Console
+
+    from styrke.watch import JsonlTail, RunState, newest_run, render, sparkline
+
+    code, run_dir = _run_smoke(tmp_path, MockEngine(max_running=4), stages=[0, 1, 2])
+    assert code == 0 and newest_run(tmp_path / "runs") == run_dir
+    state = RunState(run_dir)
+    state.refresh()
+    assert state.finished == 0 and state.planned == [0, 1, 2]
+    assert [state.stages[n]["state"] for n in (0, 1, 2)] == ["fertig"] * 3
+    assert state.counts[1] == {"n": 4, "errors": 0} and state.counts[2]["n"] > 20
+    assert state.window(60)["tps"] > 0 and max(state.history()) > 0
+    console = Console(record=True, width=120)
+    console.print(render(state))
+    text = console.export_text()
+    for expected in ("flashnext-freetoken / basis", "2 Parallelität", "fertig", "beendet, Rückgabewert 0", "Stufe 2 (Parallelität)"):
+        assert expected in text
+
+    # Ein laufender Lauf: Zeilen kommen stückweise an, eine halbe Zeile zählt erst, wenn sie vollständig ist.
+    path = tmp_path / "wachsend.jsonl"
+    path.write_text('{"a": 1}\n{"a": ', encoding="utf-8")
+    tail = JsonlTail(path)
+    assert tail.read_new() == [{"a": 1}]
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write('2}\n')
+    assert tail.read_new() == [{"a": 2}] and tail.read_new() == []
+    assert sparkline([0, 5, 10]) == "▁▅█" and sparkline([0, 0]) == "▁▁"

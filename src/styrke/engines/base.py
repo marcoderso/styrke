@@ -58,6 +58,10 @@ class EngineAdapter:
         """Engine-eigene Kennzahlen (Cache-Belegung, Durchsatz), falls verfügbar."""
         return None
 
+    async def kv_capacity_tokens(self, session: aiohttp.ClientSession) -> int | None:
+        """Größe des KV-Pools in Tokens, falls die laufende Engine sie angibt."""
+        return None
+
     def describe(self) -> dict[str, Any]:
         """Angaben für das Manifest."""
         return {"kind": self.kind, "managed": self.managed, "base_url": self.base_url}
@@ -114,31 +118,16 @@ class ExternalEngine(EngineAdapter):
     kind = "external"
     managed = False
 
-    def __init__(self, base_url: str, served_name: str):
+    def __init__(self, base_url: str, served_name: str, engine_kind: str = "freetoken"):
         super().__init__(base_url, served_name)
-        self._metric_paths: list[str] | None = None
+        self.engine_kind = engine_kind  # Art der Engine laut Testmatrix; bestimmt, wo Kennzahlen zu holen sind
 
     async def metrics(self, session: aiohttp.ClientSession) -> dict[str, Any] | None:
-        return await fetch_metric_paths(self, session, ["/v1/stats", "/v1/cache/status"])
+        from .probes import engine_metrics
 
+        return await engine_metrics(self.engine_kind, self, session)
 
-async def fetch_metric_paths(
-    adapter: EngineAdapter, session: aiohttp.ClientSession, paths: list[str]
-) -> dict[str, Any] | None:
-    """Fragt JSON-Endpunkte ab; Pfade, die es nicht gibt, werden künftig ausgelassen."""
-    active = getattr(adapter, "_metric_paths", None)
-    if active is None:
-        active = list(paths)
-        adapter._metric_paths = active  # type: ignore[attr-defined]
-    out: dict[str, Any] = {}
-    for path in list(active):
-        try:
-            timeout = aiohttp.ClientTimeout(total=5)
-            async with session.get(adapter.base_url + path, timeout=timeout) as resp:
-                if resp.status != 200:
-                    active.remove(path)
-                    continue
-                out[path.strip("/").replace("/", "_")] = await resp.json(content_type=None)
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, OSError):
-            continue
-    return out or None
+    async def kv_capacity_tokens(self, session: aiohttp.ClientSession) -> int | None:
+        from .probes import kv_capacity
+
+        return await kv_capacity(self.engine_kind, self, session)

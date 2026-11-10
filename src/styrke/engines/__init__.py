@@ -5,6 +5,8 @@ from __future__ import annotations
 from ..config import EngineConfig, HostConfig, ModelConfig, VariantConfig
 from .base import EngineAdapter, EngineError, ExternalEngine, SetupError
 from .freetoken import FreeTokenEngine
+from .sglang import SglangEngine
+from .vllm import VllmEngine
 
 __all__ = [
     "EngineAdapter", "EngineError", "ExternalEngine", "FreeTokenEngine", "SetupError", "kv_pool_tokens", "make_adapter",
@@ -21,8 +23,10 @@ def make_adapter(
     """Liefert den Adapter, der die Engine einer Zelle startet."""
     if engine.kind == "freetoken":
         return FreeTokenEngine(host, engine, model, variant, allow_busy_gpu=allow_busy_gpu)
-    if engine.kind in ("vllm", "sglang"):
-        raise EngineError(f"Der Adapter für {engine.kind} folgt in Schritt 2")
+    if engine.kind == "vllm":
+        return VllmEngine(host, engine, model, variant, allow_busy_gpu=allow_busy_gpu)
+    if engine.kind == "sglang":
+        return SglangEngine(host, engine, model, variant, allow_busy_gpu=allow_busy_gpu)
     raise EngineError(f"Unbekannte Engine-Art: {engine.kind}")
 
 

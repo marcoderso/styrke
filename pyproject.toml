@@ -12,6 +12,7 @@ dependencies = [
     "aiohttp>=3.9",
     "PyYAML>=6.0",
     "tokenizers>=0.15",
+    "rich>=13",
 ]
 
 [project.optional-dependencies]

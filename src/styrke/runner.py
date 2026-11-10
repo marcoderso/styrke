@@ -151,6 +151,14 @@ async def run_cell(opts: RunOptions, log: Callable[[str], None] = print) -> int:
     else:
         label = variant.id + ("-extern" if opts.endpoint else "") + ("-smoke" if opts.smoke else "")
         store = RunStore.create(matrix.host.runs_dir, cell.id, label)
+    console = log
+    run_log = open(store.dir / "run.log", "a", encoding="utf-8")
+
+    def log(message: str = "") -> None:  # dieselben Zeilen auch in den Laufordner, für `styrke watch`
+        console(message)
+        run_log.write(f"[{time.strftime('%H:%M:%S')}] {message}\n")
+        run_log.flush()
+
     log(f"Lauf: {store.dir}")
     if counter.kind != "tokenizer":
         log("Hinweis: Tokenizer des Modells nicht gefunden; Promptlängen werden an der Engine geeicht.")
@@ -165,7 +173,7 @@ async def run_cell(opts: RunOptions, log: Callable[[str], None] = print) -> int:
     async with aiohttp.ClientSession(connector=connector) as session:
         if adapter is None:
             served = opts.model_name or await _discover_model(session, opts.endpoint) or model.served_name
-            adapter = ExternalEngine(opts.endpoint, served)
+            adapter = ExternalEngine(opts.endpoint, served, engine_cfg.kind)
             log(f"Hänge an laufende Engine an: {opts.endpoint} (Modell {served})")
         ctx = StageContext(
             store=store, adapter=adapter, session=session, model=model, params=params, builder=builder, log=log,
@@ -205,6 +213,8 @@ async def run_cell(opts: RunOptions, log: Callable[[str], None] = print) -> int:
                     await adapter.wait_ready(session, ready_timeout, probe_body=ctx.body_for("off"), log=log)
                     if not adapter.managed:
                         adapter.load_time_s = None
+                    if ctx.kv_pool_tokens is None:  # vLLM und SGLang bemessen ihren Pool selbst
+                        ctx.kv_pool_tokens = await adapter.kv_capacity_tokens(session)
                     await _warmup(ctx, stage)
                     gpu_sampler.start()
                     periodic.start()
@@ -250,4 +260,5 @@ async def run_cell(opts: RunOptions, log: Callable[[str], None] = print) -> int:
     if failed:
         log(f"Nicht abgeschlossen: Stufe {', '.join(str(n) for n in failed)}. Nachholen mit --resume {store.dir}")
     log(f"Fertig. Rohdaten: {store.dir}")
+    run_log.close()
     return exit_code

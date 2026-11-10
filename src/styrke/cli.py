@@ -270,6 +270,19 @@ def _show_later_stages(load: Any) -> None:
                 print("  Hinweis: Überlast im Dauerlauf: " + "; ".join(overall["overload"]))
 
 
+# -- watch --------------------------------------------------------------------
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    from .watch import newest_run, watch
+
+    run_dir = Path(args.run_dir) if args.run_dir else newest_run(load_matrix(args.matrix).host.runs_dir)
+    if run_dir is None or not run_dir.is_dir():
+        print("Kein Laufordner gefunden. Angeben mit: styrke watch runs/<laufordner>", file=sys.stderr)
+        return 1
+    return watch(run_dir, refresh_s=args.interval, once=args.once)
+
+
 # -- corpus -------------------------------------------------------------------
 
 
@@ -387,6 +400,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("show", help="Kurzauswertung eines Laufs anzeigen")
     p.add_argument("run_dir", help="Laufordner unter runs/")
     p.set_defaults(func=cmd_show)
+
+    p = sub.add_parser("watch", help="laufenden oder beendeten Lauf im Terminal verfolgen")
+    p.add_argument("run_dir", nargs="?", help="Laufordner; ohne Angabe der neueste unter runs/")
+    p.add_argument("--interval", type=float, default=1.0, help="Sekunden zwischen zwei Aktualisierungen (Standard: 1)")
+    p.add_argument("--once", action="store_true", help="den Stand einmal ausgeben und enden")
+    p.set_defaults(func=cmd_watch)
 
     p = sub.add_parser("corpus", help="Textkorpus beschaffen oder anzeigen")
     p.add_argument("action", choices=["fetch", "info"])
