@@ -361,3 +361,45 @@ def test_watch_shows_progress_of_a_run(tmp_path):
         fh.write('2}\n')
     assert tail.read_new() == [{"a": 2}] and tail.read_new() == []
     assert sparkline([0, 5, 10]) == "▁▅█" and sparkline([0, 0]) == "▁▁"
+
+
+def test_batch_runs_all_cells_resumes_and_writes_report(tmp_path):
+    from rich.console import Console
+
+    from styrke.batch import plan, run_batch
+    from styrke.config import load_matrix
+    from styrke.watch import RunState, render
+
+    matrix = load_matrix(_matrix_for_test(tmp_path), local="/nonexistent")
+    assert len(plan(matrix, None, all_variants=False)) == 7 and len(plan(matrix, None, all_variants=True)) == 22
+    jobs = plan(matrix, ["flashnext-freetoken", "qwen38-27b-vllm"], all_variants=False)
+    lines: list[str] = []
+    report = tmp_path / "bericht.html"
+    engine = MockEngine(max_running=4)
+
+    async def go(job_list, stages):
+        async with Served(engine.app()) as srv:
+            return await run_batch(matrix, job_list, stages, log=lines.append, smoke=True, endpoint=srv.url, report_path=str(report))
+
+    assert asyncio.run(go(jobs, [0])) == 0
+    assert [j.status for j in jobs] == ["fertig", "fertig"] and len(list((tmp_path / "runs").glob("*/manifest.json"))) == 2
+    state = json.loads((tmp_path / "runs" / "batch.json").read_text(encoding="utf-8"))
+    assert state["finished"] and [j["cell"] for j in state["jobs"]] == ["flashnext-freetoken", "qwen38-27b-vllm"]
+    page = report.read_text(encoding="utf-8")
+    assert "flashnext-freetoken / basis" in page and "qwen38-27b-vllm / basis" in page
+
+    # Derselbe Aufruf noch einmal: nichts wird wiederholt. Mit einer weiteren Stufe laufen dieselben Ordner weiter.
+    before = engine.requests
+    again = plan(matrix, ["flashnext-freetoken", "qwen38-27b-vllm"], all_variants=False)
+    assert asyncio.run(go(again, [0])) == 0 and engine.requests == before
+    assert all(j.note == "schon vorhanden" for j in again)
+    more = plan(matrix, ["flashnext-freetoken", "qwen38-27b-vllm"], all_variants=False)
+    assert asyncio.run(go(more, [0, 1])) == 0 and engine.requests > before
+    assert len(list((tmp_path / "runs").glob("*/manifest.json"))) == 2
+
+    # Der Betrachter zeigt den Stand des Gesamtlaufs.
+    view = RunState(more[-1].run_dir)
+    view.refresh()
+    console = Console(record=True, width=120)
+    console.print(render(view))
+    assert "Gesamtlauf: 2 von 2 Zellen" in console.export_text()

@@ -87,6 +87,61 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 130
 
 
+# -- all ----------------------------------------------------------------------
+
+
+def cmd_all(args: argparse.Namespace) -> int:
+    from .batch import gpu_problem, plan, preparation_steps, run_batch
+
+    matrix = load_matrix(args.matrix)
+    try:
+        stages = parse_stages(args.stages)
+    except ValueError:
+        print(f"Fehler: --stages versteht {args.stages!r} nicht (Beispiele: 0,1,2 oder 3-7)", file=sys.stderr)
+        return 1
+    cells = [c.strip() for c in args.cells.split(",") if c.strip()] if args.cells else None
+    for cell in cells or []:
+        matrix.cell(cell)  # unbekannte Zelle: klare Fehlermeldung
+    jobs = plan(matrix, cells, args.varianten == "alle")
+    log(f"Gesamtlauf über {len(jobs)} Läufe, Stufen {args.stages}:")
+    for job in jobs:
+        log(f"  {job.cell} / {job.variant}")
+
+    if not args.endpoint:
+        import subprocess
+
+        steps = preparation_steps(matrix, jobs)
+        if steps and not args.vorbereiten:
+            log("Nicht gestartet, es fehlt noch:")
+            for text, cmd in steps:
+                log(f"  {text}: {' '.join(cmd)}")
+            log("Mit --vorbereiten erledigt styrke das selbst und startet danach.")
+            return 3
+        for text, cmd in steps:
+            log(f"Vorbereitung: {text}")
+            if subprocess.run(cmd).returncode != 0:
+                log(f"Fehlgeschlagen: {' '.join(cmd)}")
+                return 3
+        problem = asyncio.run(gpu_problem(matrix, jobs))
+        if problem:
+            log(f"Nicht gestartet: {problem}")
+            return 3
+
+    async def main_task() -> int:
+        task = asyncio.current_task()
+        assert task is not None
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
+        return await run_batch(
+            matrix, jobs, stages, log=log, smoke=args.smoke, endpoint=args.endpoint, fresh=args.neu, report_path=args.bericht
+        )
+
+    try:
+        return asyncio.run(main_task())
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        log("Abgebrochen. Derselbe Aufruf setzt den Gesamtlauf fort; fertige Zellen und Stufen bleiben erhalten.")
+        return 130
+
+
 # -- show ---------------------------------------------------------------------
 
 
@@ -293,11 +348,13 @@ def _show_later_stages(load: Any) -> None:
 def cmd_watch(args: argparse.Namespace) -> int:
     from .watch import newest_run, watch
 
-    run_dir = Path(args.run_dir) if args.run_dir else newest_run(load_matrix(args.matrix).host.runs_dir)
+    runs_dir = load_matrix(args.matrix).host.runs_dir
+    run_dir = Path(args.run_dir) if args.run_dir else newest_run(runs_dir)
     if run_dir is None or not run_dir.is_dir():
         print("Kein Laufordner gefunden. Angeben mit: styrke watch runs/<laufordner>", file=sys.stderr)
         return 1
-    return watch(run_dir, refresh_s=args.interval, once=args.once)
+    # Ohne Angabe folgt der Betrachter dem jeweils neuesten Lauf, also auch einem Gesamtlauf von Zelle zu Zelle.
+    return watch(run_dir, refresh_s=args.interval, once=args.once, follow=None if args.run_dir else runs_dir)
 
 
 # -- report -------------------------------------------------------------------
@@ -470,6 +527,17 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("show", help="Kurzauswertung eines Laufs anzeigen")
     p.add_argument("run_dir", help="Laufordner unter runs/")
     p.set_defaults(func=cmd_show)
+
+    p = sub.add_parser("all", help="alle Zellen nacheinander messen und den Bericht schreiben")
+    p.add_argument("--cells", help="nur diese Zellen, durch Komma getrennt (Standard: alle)")
+    p.add_argument("--varianten", choices=["erste", "alle"], default="erste", help="je Zelle nur die erste Variante oder alle (Standard: erste)")
+    p.add_argument("--stages", default="0-8", help="Stufen, z. B. 0-2 (Standard: alle, 0-8)")
+    p.add_argument("--vorbereiten", action="store_true", help="fehlende Images und Modelle vorher selbst beschaffen")
+    p.add_argument("--neu", action="store_true", help="vorhandene Läufe nicht fortsetzen, sondern neu beginnen")
+    p.add_argument("--bericht", default="bericht.html", help="Zieldatei des Berichts am Ende (Standard: bericht.html)")
+    p.add_argument("--smoke", action="store_true", help="kleine Parameter für einen schnellen Funktionstest")
+    p.add_argument("--endpoint", help="alle Zellen gegen diese laufende Engine fahren (nur für Tests)")
+    p.set_defaults(func=cmd_all)
 
     p = sub.add_parser("watch", help="laufenden oder beendeten Lauf im Terminal verfolgen")
     p.add_argument("run_dir", nargs="?", help="Laufordner; ohne Angabe der neueste unter runs/")

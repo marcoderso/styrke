@@ -318,8 +318,10 @@ def render(state: RunState, log_lines: int = 8) -> Group:
         lines = (state.dir / "run.log").read_text(encoding="utf-8", errors="replace").splitlines()[-log_lines:]
     except OSError:
         lines = []
+    batch = batch_panel(state.dir)
     return Group(
         Panel(head, border_style="dim"),
+        *([batch] if batch else []),
         Panel(stages, title="Stufen", title_align="left", border_style="dim"),
         Panel(live, title="Messung", title_align="left", border_style="dim"),
         Panel(machine, title="Maschine und Engine", title_align="left", border_style="dim"),
@@ -328,12 +330,34 @@ def render(state: RunState, log_lines: int = 8) -> Group:
     )
 
 
+def batch_panel(run_dir: Path) -> Panel | None:
+    """Stand eines Gesamtlaufs (``styrke all``), falls der Lauf zu einem gehört."""
+    try:
+        batch = json.loads((run_dir.parent / "batch.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    jobs = batch.get("jobs") or []
+    if not any(job.get("run_dir") and Path(job["run_dir"]).name == run_dir.name for job in jobs) and not any(
+        job.get("status") == "läuft" for job in jobs
+    ):
+        return None
+    table = Table(box=None, padding=(0, 1), show_header=False)
+    for job in jobs:
+        symbol, style = SYMBOL.get(job.get("status", "offen"), SYMBOL["offen"])
+        note = f" ({job['note']})" if job.get("note") else ""
+        table.add_row(Text(symbol, style=style), f"{job['cell']} / {job['variant']}", Text(job.get("status", "offen") + note, style=style))
+    done = sum(1 for job in jobs if job.get("status") in ("fertig", "Fehler"))
+    state = "beendet" if batch.get("finished") else f"seit {clock(time.time() - batch.get('started', time.time()))}"
+    return Panel(table, title=f"Gesamtlauf: {done} von {len(jobs)} Zellen, {state}", title_align="left", border_style="dim")
+
+
 def newest_run(runs_dir: str | Path) -> Path | None:
     runs = [p for p in Path(runs_dir).glob("*") if (p / "events.jsonl").is_file()]
     return max(runs, key=lambda p: p.stat().st_mtime) if runs else None
 
 
-def watch(run_dir: str | Path, refresh_s: float = 1.0, once: bool = False) -> int:
+def watch(run_dir: str | Path, refresh_s: float = 1.0, once: bool = False, follow: str | Path | None = None) -> int:
+    """Zeigt einen Lauf. Mit ``follow`` (dem Ordner aller Läufe) wechselt die Anzeige zum jeweils neuesten Lauf."""
     state = RunState(run_dir)
     state.refresh()
     console = Console()
@@ -344,6 +368,9 @@ def watch(run_dir: str | Path, refresh_s: float = 1.0, once: bool = False) -> in
         with Live(render(state), console=console, screen=True, refresh_per_second=4) as live:
             while True:
                 time.sleep(refresh_s)
+                newest = newest_run(follow) if follow else None
+                if newest is not None and newest != state.dir:
+                    state = RunState(newest)
                 state.refresh()
                 live.update(render(state))
     except KeyboardInterrupt:
