@@ -408,3 +408,16 @@ def test_stage8_runs_questions_and_blind_rating_roundtrip(tmp_path):
     result = import_blind(out / "bogen.csv", out / "schluessel.json")
     assert result["laeufe"][run_dir.name]["mittel"] == 2.0 and result["laeufe"][run_dir.name]["n"] == 19
     assert set(result["laeufe"][run_dir.name]["kategorien"]) == {"firmenwissen", "ehrlichkeit", "deutsch", "denken"}
+
+
+def test_saturation_is_withdrawn_when_throughput_rises_again():
+    from styrke.stages.s2_concurrency import saturation
+
+    # Messwerte des ersten Laufs an der echten Engine: Bei 20 parallelen Anfragen stieg der Durchsatz wieder.
+    measured = [(1, 57.0), (2, 73.3), (4, 123.2), (8, 195.9), (10, 194.5), (15, 195.8), (20, 248.1)]
+    assert saturation(measured[:5], 0.05, 2) == (10, False)
+    assert saturation(measured[:6], 0.05, 2) == (10, False)
+    assert saturation(measured, 0.05, 2) == (None, False)  # früher endete die Stufe hier
+    assert saturation(measured + [(25, 250.0)], 0.05, 2) == (25, False)
+    assert saturation(measured + [(25, 250.0), (30, 251.0), (35, 249.0)], 0.05, 2) == (25, True)
+    assert saturation([(1, 100.0), (2, 101.0), (4, 102.0), (8, 103.0)], 0.05, 2) == (2, True)

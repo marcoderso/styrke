@@ -42,6 +42,7 @@ class RunOptions:
     endpoint: str | None = None  # an eine laufende Engine anhängen statt selbst zu starten
     model_name: str | None = None
     resume: str | None = None
+    redo: bool = False  # mit resume: die gewählten Stufen auch dann fahren, wenn sie schon abgeschlossen sind
     smoke: bool = False
     allow_busy_gpu: bool = False
 
@@ -192,7 +193,7 @@ async def run_cell(opts: RunOptions, log: Callable[[str], None] = print) -> int:
         try:
             for stage in opts.stages:
                 name, stage_run = STAGES[stage]
-                if opts.resume and store.stage_done(stage):
+                if opts.resume and store.stage_done(stage) and not opts.redo:
                     log(f"Stufe {stage} ({name}): schon abgeschlossen, übersprungen")
                     continue
                 log(f"Stufe {stage} ({name})")

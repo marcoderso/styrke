@@ -28,7 +28,7 @@ Für alle Stufen gilt:
 
 **Frage:** Wie viel Durchsatz liefert die Zelle bei immer mehr gleichzeitigen Anfragen, und ab wann lohnt mehr nicht?
 
-**Ablauf:** Je Laststufe (`levels`) schicken N Arbeiter ununterbrochen kurze Anfragen. Nach einer Anlaufzeit folgen Messfenster (`window_s`, `windows`). Wächst der Gesamtdurchsatz gegenüber dem bisherigen Bestwert um weniger als 5 % (`saturation_gain`), gilt die Zelle als gesättigt; es folgen noch zwei Laststufen, dann endet die Stufe.
+**Ablauf:** Je Laststufe (`levels`) schicken N Arbeiter ununterbrochen kurze Anfragen. Nach einer Anlaufzeit folgen Messfenster (`window_s`, `windows`). Wächst der Gesamtdurchsatz gegenüber dem bisherigen Bestwert um weniger als 5 % (`saturation_gain`), gilt die Zelle als gesättigt; es folgen noch zwei Laststufen, dann endet die Stufe. Bringt eine der beiden doch wieder deutlichen Zuwachs, gilt die Sättigung als widerlegt und die Messung geht weiter.
 
 **Ergebnis:** je Laststufe der Gesamtdurchsatz, das Tempo je Anfrage und die Zeit bis zum ersten Token. Steigt die Zeit bis zum ersten Token sprunghaft, stehen Anfragen in der Warteschlange der Engine.
 

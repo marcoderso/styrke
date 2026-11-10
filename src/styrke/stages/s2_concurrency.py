@@ -73,6 +73,28 @@ def summarize_level(
     }
 
 
+def saturation(history: list[tuple[int, float]], gain: float, extra: int) -> tuple[int | None, bool]:
+    """Urteil über die bisherigen Laststufen: (Sättigung ab Stufe, Ende der Messung?).
+
+    Gesättigt heißt: Der Durchsatz liegt weniger als ``gain`` über dem bisherigen
+    Bestwert. Danach folgen noch ``extra`` Laststufen. Bringt eine davon doch
+    wieder deutlichen Zuwachs, gilt die Sättigung als widerlegt und die Messung
+    geht weiter; das kommt vor, wenn eine Engine mit gefüllter Warteschlange
+    mehr schafft als mit gerade voller Belegung.
+    """
+    best, saturated_at, left = 0.0, None, 0
+    for i, (level, tps) in enumerate(history):
+        if saturated_at is None:
+            if i > 0 and best > 0 and tps < best * (1 + gain):
+                saturated_at, left = level, extra
+        elif tps >= best * (1 + gain):
+            saturated_at = None
+        else:
+            left -= 1
+        best = max(best, tps)
+    return saturated_at, saturated_at is not None and left <= 0
+
+
 async def run_level(
     ctx: StageContext, n: int, params: dict[str, Any], stage: int = 2, tags: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -96,9 +118,7 @@ async def run(ctx: StageContext) -> dict[str, Any]:
     params = ctx.params["s2"]
     await ensure_calibrated(ctx)
     rows: list[dict[str, Any]] = []
-    best = 0.0
     saturated_at: int | None = None
-    extra_left = 0
     stop_reason = "alle Laststufen gefahren"
 
     ctx.log(f"  {'parallel':>8} {'tok/s gesamt':>13} {'tok/s je Anfrage':>17} {'TTFT p50':>9} {'TTFT p95':>9} {'Fehler':>7}")
@@ -115,14 +135,10 @@ async def run(ctx: StageContext) -> dict[str, Any]:
         if row["error_rate"] > params["max_error_rate"]:
             stop_reason = f"Fehleranteil {row['error_rate']:.0%} bei {n} parallelen Anfragen"
             break
-        thr = row["throughput_tps"]
-        if saturated_at is None and i > 0 and best > 0 and thr < best * (1 + params["saturation_gain"]):
-            saturated_at = n
-            extra_left = params["extra_levels_after_saturation"]
-        elif saturated_at is not None:
-            extra_left -= 1
-        best = max(best, thr)
-        if saturated_at is not None and extra_left <= 0:
+        saturated_at, done = saturation(
+            [(r["level"], r["throughput_tps"]) for r in rows], params["saturation_gain"], params["extra_levels_after_saturation"]
+        )
+        if done:
             stop_reason = f"Sättigung ab {saturated_at} parallelen Anfragen"
             break
         await asyncio.sleep(params["pause_s"])

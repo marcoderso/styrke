@@ -107,6 +107,7 @@ Nützliche Schalter von `styrke run`:
 | `--endpoint URL` | an eine laufende Engine anhängen statt selbst zu starten |
 | `--smoke` | kleine Parameter für einen schnellen Funktionstest |
 | `--resume ORDNER` | abgeschlossene Stufen überspringen |
+| `--redo` | mit `--resume`: die gewählten Stufen wiederholen, auch wenn sie abgeschlossen sind; die Auswertung nimmt den letzten Anlauf |
 | `--allow-busy-gpu` | auch starten, wenn die GPU schon belegt ist |
 
 Vor dem Start prüft styrke die Vorbereitung: Image vorhanden, Modell vorhanden, GPU frei. Fehlt etwas, nennt styrke alle Punkte auf einmal, legt keinen Laufordner an und endet mit dem Rückgabewert 3.

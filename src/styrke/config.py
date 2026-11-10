@@ -41,7 +41,8 @@ DEFAULT_STAGES: dict[str, dict[str, Any]] = {
         "lengths": [100, 1000, 8000, 32000, 128000, 250000],
         "reps": 3,
         "thinking": ["off", "on"],
-        "max_tokens": {"off": 256, "on": 1024},
+        # Mit Nachdenken so viel, dass die eigentliche Antwort noch beginnt; sonst fehlt die Zeit bis zu ihr.
+        "max_tokens": {"off": 256, "on": 4096},
         "pause_s": 1.0,
     },
     "s2": {

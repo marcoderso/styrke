@@ -70,6 +70,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         endpoint=args.endpoint,
         model_name=args.model_name,
         resume=args.resume,
+        redo=args.redo,
         smoke=args.smoke,
         allow_busy_gpu=args.allow_busy_gpu,
     )
@@ -461,6 +462,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--endpoint", help="an eine laufende Engine anhängen, z. B. http://127.0.0.1:8000")
     p.add_argument("--model-name", help="Modellname an der Schnittstelle (bei --endpoint; sonst automatisch)")
     p.add_argument("--resume", metavar="LAUFORDNER", help="abgebrochenen Lauf fortsetzen")
+    p.add_argument("--redo", action="store_true", help="mit --resume: die gewählten Stufen auch wiederholen, wenn sie schon abgeschlossen sind")
     p.add_argument("--smoke", action="store_true", help="kurzer Funktionstest mit kleinen Parametern")
     p.add_argument("--allow-busy-gpu", action="store_true", help="auch starten, wenn die GPU schon belegt ist")
     p.set_defaults(func=cmd_run)
