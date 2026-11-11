@@ -206,7 +206,10 @@ class RunState:
             self.load = s
         elif kind == "engine":
             flat = flatten_numbers({k: v for k, v in s.items() if k not in ("ts", "kind")})
-            self.engine = {k: v for k, v in flat.items() if any(h in k.lower() for h in ENGINE_HINTS)}
+            # Namen ohne die Zusätze in geschweiften Klammern (Prometheus-Labels), damit sie lesbar bleiben.
+            self.engine = {
+                k.split("{", 1)[0].removeprefix("metrics."): v for k, v in flat.items() if any(h in k.lower() for h in ENGINE_HINTS)
+            }
 
     # -- Abgeleitete Werte ---------------------------------------------------
 
