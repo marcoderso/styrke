@@ -143,6 +143,7 @@ def key_figures(run: dict[str, Any], opts: dict[str, Any]) -> dict[str, Any]:
         "target_rate": (at_target or {}).get("rate") if has_target else None,
         "users_target": users_target,
         "s6_run": bool(s6.get("rows")),
+        "dropped_kinds": [d["kind"] for d in s6.get("sessions_dropped") or []],
         "endurance_errors": (s7.get("overall") or {}).get("errors"),
         "endurance_drift_pct": s7.get("ttft_p95_drift_pct"),
         "cost_per_user": cost / decisive_users if cost and decisive_users else None,
@@ -313,6 +314,8 @@ def decision_tables(runs: list[dict[str, Any]], figures: list[dict[str, Any]], o
             sustained = ("keine Rate getragen", "bad")
         else:
             sustained = de(f["sustained_rate"], 2)
+        if f["dropped_kinds"] and f["s6_run"]:
+            sustained = (f"{sustained if isinstance(sustained, str) else sustained[0]} (ohne {', '.join(f['dropped_kinds'])})", "bad")
         row = [name, sustained, de(f["sustained_ttft_p95_s"], 2, " s"), de(f["users"], 0)]
         if has_target:
             row += [de(f["target_rate"], 2) if f["target_rate"] is not None else ("keine", "bad") if f["s6_run"] else "–",
@@ -435,10 +438,11 @@ def run_details(run: dict[str, Any]) -> str:
         parts.append(f"<h3>Stufe 3, KV-Füllstand</h3><p class='muted'>Ausgelassen: {esc(s3['skipped'])}</p>")
     if s4.get("rows"):
         parts.append("<h3>Stufe 4, Präfix-Cache</h3>" + table(
-            ["Prompt (Tokens)", "erstes Token kalt", "bei Folgefrage", "Faktor", "aus dem Cache", "nach Pause"],
+            ["Prompt (Tokens)", "erstes Token kalt", "Folgefrage sofort", "Faktor", "aus dem Cache",
+             "Folgefrage kurz danach", "nach Pause"],
             [[de(r["prompt_target"], 0), de(r["cold_ttft_s"], 2, " s"), de(r["followup_ttft_s"], 2, " s"), de(r["speedup"], 1),
               "–" if r["followup_cached_share"] is None else de(100 * r["followup_cached_share"], 0, " %"),
-              de(r["after_pause_ttft_s"], 2, " s")] for r in s4["rows"]]))
+              de(r.get("followup_delayed_ttft_s"), 2, " s"), de(r["after_pause_ttft_s"], 2, " s")] for r in s4["rows"]]))
         ev = (s4.get("eviction") or {}).get("rows") or []
         if ev:
             parts.append(table(
@@ -491,6 +495,12 @@ def build_report(run_dirs: list[str | Path], opts: dict[str, Any]) -> str:
         notes.append(
             "Das Szenario lief mit Nachdenken: " + ", ".join(sorted(str(t) for t in thinking)) + ". Mit eingeschaltetem "
             "Nachdenken schreibt ein Modell je Aufruf deutlich mehr Tokens; die getragene Rate liegt dann niedriger."
+        )
+    if any(f["dropped_kinds"] for f in figures):
+        notes.append(
+            "Nicht jede Zelle fuhr im Szenario denselben Sitzungsmix: Wo eine Sitzungsart nicht in den Kontext passt, "
+            "entfällt sie, und die getragene Rate ist mit den anderen Zellen nicht vergleichbar. Die Tabelle nennt das "
+            "bei der Rate. Eine solche Zelle kann die entfallene Arbeit, etwa große Dokumente, gar nicht leisten."
         )
     notes.append(
         f"Die Zahl der Berechtigten folgt aus der getragenen Rate und dem Nutzungsprofil „{opts['profile']}“ des Lastmodells. "

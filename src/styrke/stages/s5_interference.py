@@ -95,6 +95,13 @@ async def run(ctx: StageContext) -> dict[str, Any]:
         else:
             skipped.append({"big_target": target, "reason": "passt nicht in den Kontext"})
 
+    if not targets:
+        # Keine der vorgesehenen Längen passt: ersatzweise die größte, die laut Stufe 0 läuft.
+        fallback = min(ctx.prompt_limit(), ctx.model.max_context - params["big_max_tokens"] - 256)
+        if fallback >= params["fallback_min_tokens"]:
+            targets = [fallback]
+            ctx.log(f"  keine der vorgesehenen großen Anfragen passt; ersatzweise {fallback} Tokens")
+
     loop = ClosedLoop(
         ctx, params["chats"], stage=5, prompt_tokens=params["prompt_tokens"], max_tokens=params["max_tokens"],
         thinking=params["thinking"], tags={"what": "background"},

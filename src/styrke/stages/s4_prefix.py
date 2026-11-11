@@ -30,14 +30,21 @@ def _ratio(cold: float | None, warm: float | None) -> float | None:
 def summarize_length(target: int, samples: list[dict[str, Any]], pause_s: float) -> dict[str, Any]:
     """Mediane einer Promptlänge über alle Wiederholungen."""
 
-    def ttfts(key: str) -> list[float]:
-        return [s[key]["ttft_s"] for s in samples if s.get(key) and s[key]["ok"]]
+    def picked(key: str, delayed: bool | None) -> list[dict[str, Any]]:
+        recs = [s[key] for s in samples if s.get(key) and s[key]["ok"]]
+        if delayed is None:
+            return recs
+        return [r for r in recs if bool(r.get("delay_s")) == delayed]
 
-    def shares(key: str) -> list[float]:
-        values = [cached_share(s[key]) for s in samples if s.get(key) and s[key]["ok"]]
-        return [v for v in values if v is not None]
+    def ttfts(key: str, delayed: bool | None = None) -> list[float]:
+        return [r["ttft_s"] for r in picked(key, delayed)]
 
-    cold, warm, paused = median(ttfts("cold")), median(ttfts("followup")), median(ttfts("after_pause"))
+    def shares(key: str, delayed: bool | None = None) -> list[float]:
+        return [v for v in (cached_share(r) for r in picked(key, delayed)) if v is not None]
+
+    immediate = ttfts("followup", False) or ttfts("followup")  # ohne sofortige Folgefrage zählt die verzögerte
+    cold, warm, paused = median(ttfts("cold")), median(immediate), median(ttfts("after_pause"))
+    delayed = median(ttfts("followup", True))
     prompt_tokens = [s["cold"]["prompt_tokens"] for s in samples if s.get("cold") and s["cold"].get("prompt_tokens")]
     return {
         "prompt_target": target,
@@ -47,7 +54,11 @@ def summarize_length(target: int, samples: list[dict[str, Any]], pause_s: float)
         "cold_ttft_s": cold,
         "followup_ttft_s": warm,
         "speedup": _ratio(cold, warm),
-        "followup_cached_share": median(shares("followup")),
+        "followup_cached_share": median(shares("followup", False) or shares("followup")),
+        # dieselbe Folgefrage, wenige Sekunden nach dem Ende der ersten Antwort gestellt
+        "followup_delayed_ttft_s": delayed,
+        "followup_delayed_speedup": _ratio(cold, delayed),
+        "followup_delayed_cached_share": median(shares("followup", True)),
         "pause_s": pause_s,
         "after_pause_ttft_s": paused,
         "after_pause_cached_share": median(shares("after_pause")),
@@ -72,11 +83,17 @@ async def measure_lengths(ctx: StageContext, params: dict[str, Any]) -> tuple[li
             if not sample["cold"]["ok"]:
                 ctx.log(f"  {target:>7} Tokens, Lauf {rep + 1}: FEHLER: {sample['cold']['error']}")
                 break
+            # Manche Engines stellen den Zwischenstand einer Anfrage erst kurz nach ihrem Ende bereit.
+            # Deshalb kommt die Folgefrage je nach Lauf sofort oder nach wenigen Sekunden.
+            delays = params.get("followup_delays_s") or [0]
+            delay = delays[rep % len(delays)]
+            if delay > 0:
+                await asyncio.sleep(delay)
             await chat.add_followup()
-            sample["followup"] = await chat.send(max_tokens, what="followup")
+            sample["followup"] = await chat.send(max_tokens, what="followup", delay_s=delay)
             line = (
                 f"  {target:>7} Tokens, Lauf {rep + 1}: kalt {fmt(sample['cold']['ttft_s'], 2, ' s')}, "
-                f"Folgefrage {fmt(sample['followup']['ttft_s'], 2, ' s')}"
+                f"Folgefrage {'sofort' if delay == 0 else f'nach {delay:g} s'} {fmt(sample['followup']['ttft_s'], 2, ' s')}"
             )
             if rep == 0 and params["pause_s"] > 0 and sample["followup"]["ok"]:
                 await asyncio.sleep(params["pause_s"])
@@ -165,12 +182,12 @@ async def run(ctx: StageContext) -> dict[str, Any]:
     ctx.store.write_json("summary_s4.json", summary)
 
     ctx.log("")
-    ctx.log(f"  {'Prompt':>8} {'kalt s':>8} {'Folgefrage s':>13} {'Faktor':>7} {'aus Cache':>10} {'nach Pause s':>13}")
+    ctx.log(f"  {'Prompt':>8} {'kalt s':>8} {'Folgefrage sofort s':>20} {'aus Cache':>10} {'kurz danach s':>14} {'nach Pause s':>13}")
     for row in rows:
         share = row["followup_cached_share"]
         ctx.log(
-            f"  {row['prompt_target']:>8} {fmt(row['cold_ttft_s'], 2):>8} {fmt(row['followup_ttft_s'], 2):>13} "
-            f"{fmt(row['speedup'], 1):>7} {fmt(None if share is None else 100 * share, 0, ' %'):>10} "
+            f"  {row['prompt_target']:>8} {fmt(row['cold_ttft_s'], 2):>8} {fmt(row['followup_ttft_s'], 2):>20} "
+            f"{fmt(None if share is None else 100 * share, 0, ' %'):>10} {fmt(row['followup_delayed_ttft_s'], 2):>14} "
             f"{fmt(row['after_pause_ttft_s'], 2):>13}"
         )
     return summary

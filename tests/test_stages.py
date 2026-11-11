@@ -169,13 +169,14 @@ S3 = {
 
 
 def test_stage3_held_sessions_survive_when_pool_is_large_enough(tmp_path):
-    engine = MockEngine(max_running=4, prefill_tokens_per_s=5000, kv_pool_tokens=500_000, max_context=20_000)
+    engine = MockEngine(max_running=4, prefill_tokens_per_s=2000, kv_pool_tokens=500_000, max_context=20_000)
     code, run_dir, load, _ = _run(tmp_path, engine, [3], {"s3": S3})
     assert code == 0
     s3 = load("summary_s3.json")
     empty, half = s3["fills"]
     assert s3["pool_tokens"] == 16000 and empty["held_sessions"] == 0 and empty["probe_n"] == 0
-    assert half["held_sessions"] == 4 and 8000 <= half["held_tokens"] < 8200  # 50 % von 16.000
+    # Bei kleinem Pool werden die Gespräche verkleinert (hier auf 1.000 Tokens); 50 % von 16.000 werden nicht überschritten.
+    assert s3["session_tokens"] == 1000 and half["held_sessions"] == 8 and 7900 <= half["held_tokens"] <= 8160
     assert half["cold_ttft_p50_s"] > 0.3 and half["probe_ttft_p50_s"] < 0.1
     assert half["retained_by_ttft"] == 1.0 and half["retained_by_cache_report"] == 1.0
     assert half["engine_metrics_after_fill"]["v1_cache_status"]["kv_pool"]["used_tokens"] > 8000
@@ -183,15 +184,15 @@ def test_stage3_held_sessions_survive_when_pool_is_large_enough(tmp_path):
     assert all(r["throughput_tps"] > 0 and r["errors"] == 0 for r in s3["rows"])
 
     requests = [r for r in read_jsonl(run_dir / "requests.jsonl") if r["stage"] == 3]
-    assert sum(r.get("what") == "fill" for r in requests) == 4 and sum(r.get("what") == "probe" for r in requests) == 4
+    assert sum(r.get("what") == "fill" for r in requests) == 8 and sum(r.get("what") == "probe" for r in requests) == 4
     probes = [r for r in requests if r.get("what") == "probe"]
-    assert all(r["turn"] == 1 and r["cached_tokens"] > 1900 for r in probes)
+    assert all(r["turn"] == 1 and r["cached_tokens"] > 950 for r in probes)
     assert {r["fill"] for r in requests if "level" in r} == {0.0, 0.5}
 
 
 def test_stage3_shows_eviction_when_pool_overflows(tmp_path):
     # Der Pool der Attrappe fasst die gehaltenen Gespräche gerade so; die Last danach verdrängt sie.
-    engine = MockEngine(max_running=4, prefill_tokens_per_s=5000, kv_pool_tokens=9000, max_context=20_000)
+    engine = MockEngine(max_running=4, prefill_tokens_per_s=2000, kv_pool_tokens=9000, max_context=20_000)
     code, _, load, _ = _run(tmp_path, engine, [3], {"s3": S3})
     half = load("summary_s3.json")["fills"][1]
     assert code == 0 and engine.evictions > 0
@@ -212,7 +213,7 @@ def test_stage3_is_skipped_when_pool_size_is_unknown(tmp_path):
 def test_stage4_measures_cache_benefit_pause_and_eviction(tmp_path):
     engine = MockEngine(max_running=4, prefill_tokens_per_s=5000, kv_pool_tokens=10_000, max_context=20_000)
     params = {
-        "lengths": [1000, 3000, 300000], "reps": 2, "max_tokens": 12, "pause_s": 0.3,
+        "lengths": [1000, 3000, 300000], "reps": 2, "max_tokens": 12, "pause_s": 0.3, "followup_delays_s": [0, 0.2],
         "evict_lengths": [2000], "evict_chunk_tokens": 2000, "evict_factor": 1.1, "pool_tokens": 10_000,
     }
     code, run_dir, load, _ = _run(tmp_path, engine, [4], {"s4": params})
@@ -224,6 +225,7 @@ def test_stage4_measures_cache_benefit_pause_and_eviction(tmp_path):
     assert 0.5 < long["cold_ttft_s"] < 0.9 and long["followup_ttft_s"] < 0.1 and long["speedup"] > 5
     assert long["followup_cached_share"] > 0.95 and long["after_pause_cached_share"] > 0.95
     assert long["after_pause_ttft_s"] < 0.1
+    assert long["followup_delayed_ttft_s"] < 0.1 and long["followup_delayed_cached_share"] > 0.95  # zweiter Lauf, verzögert
     assert short["cold_ttft_s"] < long["cold_ttft_s"]
 
     eviction = s4["eviction"]
@@ -421,3 +423,15 @@ def test_saturation_is_withdrawn_when_throughput_rises_again():
     assert saturation(measured + [(25, 250.0)], 0.05, 2) == (25, False)
     assert saturation(measured + [(25, 250.0), (30, 251.0), (35, 249.0)], 0.05, 2) == (25, True)
     assert saturation([(1, 100.0), (2, 101.0), (4, 102.0), (8, 103.0)], 0.05, 2) == (2, True)
+
+
+def test_stage5_falls_back_to_largest_feasible_prompt(tmp_path):
+    """Passt keine der großen Anfragen in den Kontext, misst die Stufe mit der größten lauffähigen."""
+    engine = MockEngine(max_running=8, prefill_tokens_per_s=20_000, max_context=20_000)
+    code, run_dir, _, _ = _run(tmp_path, engine, [0], {"s0": {"context_probes": [9000, 50_000]}})
+    params = {"chats": 2, "prompt_tokens": 40, "max_tokens": 30, "big_lengths": [128_000], "big_max_tokens": 10, "reps": 1,
+              "warmup_s": 0.3, "baseline_s": 0.5, "recovery_s": 0.3, "fallback_min_tokens": 8000}
+    code, _, load, lines = _run(tmp_path, engine, [5], {"s5": params}, resume=str(run_dir))
+    s5 = load("summary_s5.json")
+    assert code == 0 and [r["big_target"] for r in s5["rows"]] == [9000] and s5["rows"][0]["big_ok"]
+    assert s5["skipped"][0]["big_target"] == 128_000 and any("ersatzweise 9000" in line for line in lines)

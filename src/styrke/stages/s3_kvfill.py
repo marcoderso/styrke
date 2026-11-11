@@ -22,6 +22,7 @@ from .common import StageContext, ensure_calibrated, fmt
 from .load import Chat, cached_share, looks_cached
 from .s2_concurrency import run_level
 
+MIN_SESSIONS_IN_POOL = 20  # ein gehaltenes Gespräch belegt höchstens ein Zwanzigstel des Pools
 RESERVE_TOKENS = 1024  # Platz für Folgefragen und kurze Antworten eines gehaltenen Gesprächs
 
 
@@ -32,7 +33,8 @@ def held_tokens(held: list[Chat]) -> int:
 async def fill_to(ctx: StageContext, held: list[Chat], target_tokens: int, fill: float, params: dict[str, Any]) -> int:
     """Eröffnet nacheinander Gespräche, bis zusammen ``target_tokens`` gehalten sind. Liefert die Fehlerzahl."""
     errors = 0
-    while held_tokens(held) < target_tokens and errors < 3:
+    # Nur so viele Gespräche, wie unter den Füllstand passen: Ein weiteres würde ihn überschreiten.
+    while held_tokens(held) + params["session_tokens"] <= target_tokens * 1.02 and errors < 3:
         chat = Chat(ctx, stage=3, thinking=params["thinking"], tags={"fill": fill})
         await chat.open(params["session_tokens"])
         rec = await chat.send(params["probe_max_tokens"], what="fill")
@@ -95,6 +97,10 @@ async def run(ctx: StageContext) -> dict[str, Any]:
     if not ctx.fits(session_tokens, RESERVE_TOKENS):
         session_tokens = min(ctx.prompt_limit(), ctx.model.max_context - RESERVE_TOKENS)
         ctx.log(f"  Gespräche auf {session_tokens} Tokens gekürzt, damit sie in den Kontext passen")
+    if session_tokens > pool // MIN_SESSIONS_IN_POOL:
+        # Bei kleinem Pool wären wenige große Gespräche zu grob: Der Füllstand ließe sich nicht treffen.
+        session_tokens = max(1000, pool // MIN_SESSIONS_IN_POOL)
+        ctx.log(f"  Gespräche auf {session_tokens} Tokens verkleinert, damit sich der Füllstand des Pools treffen lässt")
     params = {**params, "session_tokens": session_tokens}
 
     held: list[Chat] = []

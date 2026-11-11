@@ -34,7 +34,7 @@ DEFAULT_STAGES: dict[str, dict[str, Any]] = {
         "sample_interval_s": 2.0,
     },
     "s0": {
-        "context_probes": [32000, 128000, 250000],
+        "context_probes": [32000, 64000, 128000, 250000],
         "sanity_max_tokens": 128,
     },
     "s1": {
@@ -75,8 +75,9 @@ DEFAULT_STAGES: dict[str, dict[str, Any]] = {
         "drain_s": 120,
     },
     "s4": {
-        "lengths": [1000, 8000, 32000, 128000, 250000],
+        "lengths": [1000, 8000, 32000, 64000, 128000, 250000],
         "reps": 3,
+        "followup_delays_s": [0, 5, 0],  # je Lauf: Folgefrage sofort oder nach so vielen Sekunden
         "max_tokens": 64,
         "thinking": "off",
         "pause_s": 120,  # Ruhezeit vor der zweiten Folgefrage, einmal je Promptlänge
@@ -91,6 +92,7 @@ DEFAULT_STAGES: dict[str, dict[str, Any]] = {
         "max_tokens": 300,
         "thinking": "off",
         "big_lengths": [128000, 250000],
+        "fallback_min_tokens": 8000,  # passt keine der Längen, gilt die größte lauffähige, wenn sie mindestens so lang ist
         "big_max_tokens": 300,
         "reps": 2,
         "warmup_s": 15,
@@ -177,6 +179,7 @@ SMOKE_STAGES: dict[str, dict[str, Any]] = {
     "s4": {
         "lengths": [500, 2000],
         "reps": 1,
+        "followup_delays_s": [0],
         "max_tokens": 16,
         "pause_s": 1,
         "evict_lengths": [1000],

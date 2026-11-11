@@ -45,7 +45,7 @@ Für alle Stufen gilt:
 
 **Zu beachten:**
 
-- Die Poolgröße kommt bei FreeToken aus der Startoption `kv-reserve-tokens`. Ist sie nicht bekannt, lässt styrke die Stufe aus; dann `stages.s3.pool_tokens` setzen.
+- Die Poolgröße kommt bei FreeToken aus der Startoption `kv-reserve-tokens`; vLLM und SGLang nennen sie selbst, sobald sie laufen. Ist der Pool klein, verkleinert styrke die gehaltenen Gespräche auf höchstens ein Zwanzigstel des Pools, damit sich der Füllstand treffen lässt. Ist sie nicht bekannt, lässt styrke die Stufe aus; dann `stages.s3.pool_tokens` setzen.
 - Die Füllstände bauen aufeinander auf, ohne Neustart dazwischen. Im Pool liegen deshalb auch die Reste der kurzen Anfragen. Wie voll er laut Engine war, steht in `engine_metrics_after_fill` und `engine_metrics_after_load`.
 - Behält eine Engine den Zwischenstand beendeter Anfragen gar nicht, belegen gehaltene Gespräche nichts. Dann unterscheiden sich die Füllstände nicht, und Stufe 4 zeigt bei Folgefragen keinen Gewinn.
 
@@ -55,6 +55,7 @@ Für alle Stufen gilt:
 
 **Ablauf:** Je Promptlänge (`lengths`) beginnt ein Gespräch kalt. Sofort danach kommt eine Folgefrage; die Engine kennt ihren Anfang schon und muss nur den neuen Teil einlesen. Dazu zwei Zusatzmessungen:
 
+- kurz danach: In einem Teil der Läufe kommt die Folgefrage nicht sofort, sondern nach wenigen Sekunden (`followup_delays_s`). Manche Engines stellen den Zwischenstand einer Anfrage erst kurz nach ihrem Ende vollständig bereit; dann ist die sofortige Folgefrage langsamer als die verzögerte.
 - nach Pause: eine weitere Folgefrage nach `pause_s` Sekunden Ruhe (einmal je Promptlänge);
 - nach Verdrängung: Zwischen zwei Folgefragen schiebt styrke mehr fremden Text durch die Engine, als der KV-Pool fasst (`evict_factor` mal Poolgröße).
 
@@ -68,7 +69,7 @@ Für alle Stufen gilt:
 
 **Ergebnis:** je Abschnitt der Durchsatz der Chats, die Abstände zwischen zwei Tokens derselben Antwort, die längste Zeit ganz ohne Token (`silence_max_s`) und die Zeit bis zum ersten Token für Chats, die in dem Abschnitt begonnen haben. `slowdown_prefill_pct` ist der Einbruch des Durchsatzes beim Einlesen gegenüber vorher.
 
-**Zu beachten:** Lässt die Engine nur so viele Anfragen gleichzeitig zu, wie Chats laufen, wartet die große Anfrage erst auf einen freien Platz und verdrängt dann einen Chat in die Warteschlange. Das Ergebnis hängt also von der Variante ab.
+**Zu beachten:** Passt keine der vorgesehenen Längen in den Kontext der Zelle, misst die Stufe ersatzweise mit der größten, die laut Stufe 0 läuft. Lässt die Engine nur so viele Anfragen gleichzeitig zu, wie Chats laufen, wartet die große Anfrage erst auf einen freien Platz und verdrängt dann einen Chat in die Warteschlange. Das Ergebnis hängt also von der Variante ab.
 
 ## Stufe 6, Szenario
 
