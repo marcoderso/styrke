@@ -109,9 +109,12 @@ def collect_manual(run_dirs: list[str | Path], thinking: str = "off") -> list[di
     """Die von Hand zu bewertenden Antworten, je Modell aus einem Lauf.
 
     Die Antwortgüte hängt am Modell, nicht an der Engine. Liegen für ein Modell
-    mehrere Läufe vor, zählt der zuletzt genannte, also der neueste.
+    mehrere Läufe vor, zählt der, dessen Antworten zuletzt geschrieben wurden;
+    der Name des Laufordners sagt darüber nichts, weil Stufe 8 sich einzeln
+    wiederholen lässt.
     """
     by_model: dict[str, list[dict[str, Any]]] = {}
+    newest: dict[str, float] = {}
     for run_dir in run_dirs:
         path = Path(run_dir) / "answers" / "s8.jsonl"
         if not path.is_file():
@@ -127,8 +130,9 @@ def collect_manual(run_dirs: list[str | Path], thinking: str = "off") -> list[di
             manual = rec.get("manuell", (rec.get("check") or {}).get("ok") is None and not (rec.get("check") or {}).get("skipped"))
             if rec.get("thinking") == thinking and manual and not rec.get("error"):
                 rows.append({**rec, "run": Path(run_dir).name, "model": model})
-        if rows:
-            by_model[model] = rows
+        written = path.stat().st_mtime
+        if rows and written >= newest.get(model, 0.0):
+            by_model[model], newest[model] = rows, written
     return [row for rows in by_model.values() for row in rows]
 
 
@@ -155,7 +159,11 @@ def export_blind(run_dirs: list[str | Path], out_dir: str | Path, thinking: str 
     sheet_id = hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:10]
     ordered = [questions[qid] for qid in sorted(questions)]
     (out / "bewertung.html").write_text(build_page(sheet_id, ordered), encoding="utf-8")
-    return {"antworten": len(rows), "modelle": len({r["model"] for r in rows}), "fragen": len(questions)}
+    models = {r["model"] for r in rows}
+    answered = {qid: {r["model"] for r in rows if r["id"] == qid} for qid in questions}
+    incomplete = sorted(qid for qid, have in answered.items() if have != models)  # nicht jedes Modell hat geantwortet
+    return {"antworten": len(rows), "modelle": len(models), "fragen": len(questions), "unvollstaendig": incomplete,
+            "laeufe": sorted({r["run"] for r in rows})}
 
 
 def import_verdicts(files: list[str | Path], key_file: str | Path) -> dict[str, Any]:

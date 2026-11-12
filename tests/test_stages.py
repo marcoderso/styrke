@@ -406,7 +406,8 @@ def test_stage8_runs_questions_and_blind_rating_roundtrip(tmp_path):
     out = tmp_path / "bewertung"
     info = export_blind([run_dir], out, seed=1)
     page = (out / "bewertung.html").read_text(encoding="utf-8")
-    assert info == {"antworten": 18, "modelle": 1, "fragen": 18} and run_dir.name not in page and "flashnext" not in page
+    assert (info["antworten"], info["modelle"], info["fragen"], info["unvollstaendig"]) == (18, 1, 18, [])
+    assert info["laeufe"] == [run_dir.name] and run_dir.name not in page and "flashnext" not in page
     key = json.loads((out / "schluessel.json").read_text(encoding="utf-8"))
     assert {v["kategorie"] for v in key.values()} == {"ehrlichkeit", "deutsch"} and all(v["model"] == "Qwen/Qwen3.8-Flash-Next-FP8" for v in key.values())
 
@@ -429,19 +430,26 @@ def test_rating_page_and_verdict_import(tmp_path):
         (run / "answers" / "s8.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
         return run
 
+    import os
+
     runs = [
-        fake_run("1-a-vllm", "modell-a", {"q1": "**Gut.**", "q2": "Nein.", "auto": "42"}),
-        fake_run("2-a-sglang", "modell-a", {"q1": "Gut, andere Engine.", "q2": "Nein.", "auto": "42"}),  # dasselbe Modell: nur ein Lauf zählt
+        fake_run("1-a-vllm", "modell-a", {"q1": "Gut, frisch wiederholt.", "q2": "Nein.", "auto": "42"}),
+        fake_run("2-a-sglang", "modell-a", {"q1": "**Alt.**", "auto": "42"}),  # dasselbe Modell, ältere Antworten, späterer Ordnername
         fake_run("3-b", "modell-b", {"q1": "Erfunden. </script><b>x</b>", "q2": "Nein.", "auto": "41"}),
     ]
+    old_answers = runs[1] / "answers" / "s8.jsonl"
+    os.utime(old_answers, (old_answers.stat().st_mtime - 3600,) * 2)  # eine Stunde älter als die Wiederholung
     out = tmp_path / "bewertung"
-    assert export_blind(runs, out, seed=3) == {"antworten": 4, "modelle": 2, "fragen": 2}
+    info = export_blind(runs, out, seed=3)
+    assert (info["antworten"], info["modelle"], info["fragen"], info["unvollstaendig"]) == (4, 2, 2, [])
+    assert info["laeufe"] == ["1-a-vllm", "3-b"]  # je Modell der Lauf mit den zuletzt geschriebenen Antworten
+    assert export_blind(runs[1:], tmp_path / "unfair", seed=3)["unvollstaendig"] == ["q2"]  # dem alten Lauf fehlt eine Frage
     page = (out / "bewertung.html").read_text(encoding="utf-8")
     assert "modell-a" not in page and "vllm" not in page and "http" not in page and "<\\/script><b>x" in page
     data = js.loads(page.split('type="application/json">', 1)[1].split("</script>", 1)[0])
     cards = {q["id"]: q["cards"] for q in data["questions"]}
     assert set(cards) == {"q1", "q2"} and len(cards["q1"]) == 2 and [len(c["nrs"]) for c in cards["q2"]] == [2]
-    assert "andere Engine" in page and "**Gut.**" not in page  # der neuere Lauf des Modells zählt
+    assert "frisch wiederholt" in page and "Alt." not in page
 
     key = js.loads((out / "schluessel.json").read_text(encoding="utf-8"))
     nr = {(v["model"], v["id"]): k for k, v in key.items()}

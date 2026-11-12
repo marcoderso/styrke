@@ -392,6 +392,14 @@ def cmd_bewertung(args: argparse.Namespace) -> int:
             print("Fehler: In den Läufen liegen keine von Hand zu bewertenden Antworten der Stufe 8.", file=sys.stderr)
             return 1
         print(f"{result['antworten']} Antworten zu {result['fragen']} Fragen von {result['modelle']} Modellen nach {args.out}/ geschrieben.")
+        print("Verwendete Läufe: " + ", ".join(result["laeufe"]))
+        if result["unvollstaendig"]:
+            print(
+                f"ACHTUNG: Bei {len(result['unvollstaendig'])} Fragen fehlt die Antwort mindestens eines Modells "
+                f"({', '.join(result['unvollstaendig'][:6])}{' ...' if len(result['unvollstaendig']) > 6 else ''}). "
+                "Vermutlich lief Stufe 8 noch nicht für alle Modelle mit dem aktuellen Fragensatz. Die Seite ist so nicht fair.",
+                file=sys.stderr,
+            )
         print("bewertung.html geht an die bewertenden Personen: im Browser öffnen, je Antwort urteilen, Ergebnis speichern.")
         print("schluessel.json bleibt bei dir. Einlesen: styrke bewertung import bewertung_*.json")
         return 0
