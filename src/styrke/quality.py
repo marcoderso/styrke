@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import random
 import re
@@ -10,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from .rating_page import build_page
 
 # Schriftzeichen, die in einer deutschen Antwort nichts zu suchen haben: Kyrillisch, Hebräisch, Arabisch,
 # indische Schriften, Thai, CJK mit Kana und Hangul.
@@ -121,6 +124,22 @@ def export_blind(run_dirs: list[str | Path], out_dir: str | Path, thinking: str 
             key[str(nr)] = {"run": row["run"], "id": row["id"], "kategorie": row["kategorie"], "thinking": row["thinking"]}
             writer.writerow([nr, row["frage"], row.get("referenz", ""), row.get("antwort") or "(keine Antwort)", "", ""])
     (out / "schluessel.json").write_text(json.dumps(key, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    # Dieselben Antworten als Seite zum Sortieren: je Frage alle Antworten, wortgleiche zu einer Karte vereint.
+    questions: dict[str, dict[str, Any]] = {}
+    for nr, row in enumerate(rows, 1):
+        question = questions.setdefault(
+            row["id"], {"id": row["id"], "frage": row["frage"], "referenz": row.get("referenz", ""), "cards": []}
+        )
+        text = (row.get("antwort") or "").strip()
+        card = next((c for c in question["cards"] if c["text"] == text), None)
+        if card is None:
+            question["cards"].append({"nrs": [nr], "text": text})
+        else:
+            card["nrs"].append(nr)
+    sheet_id = hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:10]
+    ordered = [questions[qid] for qid in sorted(questions)]
+    (out / "bewertung.html").write_text(build_page(sheet_id, ordered), encoding="utf-8")
     (out / "anleitung.md").write_text(
         "# Bewertung der Antworten\n\n"
         "Die Datei `bogen.csv` enthält Fragen, je eine Referenzantwort und die Antwort eines Modells. Von welchem "
@@ -133,7 +152,49 @@ def export_blind(run_dirs: list[str | Path], out_dir: str | Path, thinking: str 
         "Die Datei `schluessel.json` ordnet die Zeilen den Modellen zu. Wer bewertet, bekommt sie nicht.\n",
         encoding="utf-8",
     )
-    return {"antworten": len(rows), "laeufe": len({r["run"] for r in rows})}
+    return {"antworten": len(rows), "laeufe": len({r["run"] for r in rows}), "fragen": len(questions)}
+
+
+def import_rankings(files: list[str | Path], key_file: str | Path) -> dict[str, Any]:
+    """Liest Rangfolgen aus der Bewertungsseite (eine Datei je Person) und rechnet den mittleren Platz je Lauf.
+
+    Platz 1 ist der beste. Wortgleiche Antworten teilen sich ihre Plätze: Stehen
+    zwei Läufe gemeinsam auf den Plätzen 2 und 3, bekommen beide 2,5.
+    """
+    key = json.loads(Path(key_file).read_text(encoding="utf-8"))
+    places: dict[str, dict[str, list[float]]] = {}
+    firsts: dict[str, int] = {}
+    raters: list[str] = []
+    judged = 0
+    for file in files:
+        data = json.loads(Path(file).read_text(encoding="utf-8"))
+        if data.get("format") != "styrke-rangfolge-1":
+            raise ValueError(f"{file} ist keine Ergebnisdatei der Bewertungsseite")
+        raters.append(data.get("bewerter") or Path(file).stem)
+        for groups in (data.get("rangfolgen") or {}).values():
+            judged += 1
+            position = 0
+            for group in groups:
+                place = position + (len(group) + 1) / 2  # mittlerer Platz der Gruppe
+                for nr in group:
+                    info = key.get(str(nr))
+                    if not info:
+                        continue
+                    places.setdefault(info["run"], {}).setdefault(info["kategorie"], []).append(place)
+                    if position == 0:
+                        firsts[info["run"]] = firsts.get(info["run"], 0) + 1
+                position += len(group)
+    result: dict[str, Any] = {"bewerter": raters, "bewertete_fragen": judged, "laeufe": {}}
+    for run, categories in places.items():
+        every = [v for values in categories.values() for v in values]
+        result["laeufe"][run] = {
+            "platz_mittel": round(sum(every) / len(every), 2),
+            "n": len(every),
+            "erster_platz": firsts.get(run, 0),
+            "kategorien": {cat: round(sum(v) / len(v), 2) for cat, v in sorted(categories.items())},
+        }
+    result["laeufe"] = dict(sorted(result["laeufe"].items(), key=lambda item: item[1]["platz_mittel"]))
+    return result
 
 
 def import_blind(sheet: str | Path, key_file: str | Path) -> dict[str, Any]:

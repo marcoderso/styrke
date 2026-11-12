@@ -390,11 +390,30 @@ def cmd_bewertung(args: argparse.Namespace) -> int:
         if not result["antworten"]:
             print("Fehler: In den Läufen liegen keine Antworten der Stufe 8 (answers/s8.jsonl).", file=sys.stderr)
             return 1
-        print(f"{result['antworten']} Antworten aus {result['laeufe']} Läufen nach {args.out}/ geschrieben.")
-        print("bogen.csv und anleitung.md gehen an die bewertende Person, schluessel.json bleibt bei dir.")
+        print(f"{result['antworten']} Antworten zu {result['fragen']} Fragen aus {result['laeufe']} Läufen nach {args.out}/ geschrieben.")
+        print("bewertung.html geht an die bewertenden Personen: im Browser öffnen, sortieren, Ergebnis speichern.")
+        print("schluessel.json bleibt bei dir. Einlesen: styrke bewertung import bewertung_*.json")
+        return 0
+    key_file = args.schluessel or str(Path(args.out) / "schluessel.json")
+    if args.paths and all(str(p).endswith(".json") for p in args.paths) and not (len(args.paths) == 2 and args.paths[0].endswith(".csv")):
+        from .quality import import_rankings
+
+        files = [p for p in args.paths if Path(p).name != "schluessel.json"]
+        try:
+            result = import_rankings(files, key_file)
+        except (OSError, ValueError) as exc:
+            print(f"Fehler: {exc}", file=sys.stderr)
+            return 1
+        Path(args.out).mkdir(parents=True, exist_ok=True)
+        (Path(args.out) / "rangfolge.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"{len(result['bewerter'])} Bewertende ({', '.join(result['bewerter'])}), {result['bewertete_fragen']} Rangfolgen. Platz 1 ist der beste.")
+        print(f"  {'Lauf':<58} {'Platz im Mittel':>16} {'erster Platz':>13}")
+        for run, info in result["laeufe"].items():
+            print(f"  {run:<58} {info['platz_mittel']:>16.2f} {info['erster_platz']:>13}")
+        print(f"Einzelheiten je Kategorie: {Path(args.out) / 'rangfolge.json'}")
         return 0
     if len(args.paths) != 2:
-        print("Aufruf: styrke bewertung import <bogen.csv> <schluessel.json>", file=sys.stderr)
+        print("Aufruf: styrke bewertung import <bewertung_name.json> [weitere ...]   oder   <bogen.csv> <schluessel.json>", file=sys.stderr)
         return 1
     result = import_blind(args.paths[0], args.paths[1])
     Path(args.out).mkdir(parents=True, exist_ok=True)
@@ -557,9 +576,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("bewertung", help="Blindbewertung der Antworten: Bogen ausgeben und ausgefüllt einlesen")
     p.add_argument("action", choices=["export", "import"])
-    p.add_argument("paths", nargs="*", help="export: Laufordner (ohne Angabe die neuesten); import: bogen.csv schluessel.json")
+    p.add_argument("paths", nargs="*", help="export: Laufordner (ohne Angabe die neuesten); import: Ergebnisdateien der Bewertungsseite")
     p.add_argument("--out", default="bewertung", help="Ordner für Bogen und Ergebnis (Standard: bewertung)")
     p.add_argument("--thinking", default="off", choices=["off", "on"], help="welche Antworten in den Bogen kommen (Standard: off)")
+    p.add_argument("--schluessel", help="Schlüsseldatei für import (Standard: <out>/schluessel.json)")
     p.set_defaults(func=cmd_bewertung)
 
     p = sub.add_parser("corpus", help="Textkorpus beschaffen oder anzeigen")

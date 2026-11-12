@@ -401,7 +401,7 @@ def test_stage8_runs_questions_and_blind_rating_roundtrip(tmp_path):
     out = tmp_path / "bewertung"
     info = export_blind([run_dir], out, seed=1)
     sheet = (out / "bogen.csv").read_text(encoding="utf-8-sig")
-    assert info == {"antworten": 19, "laeufe": 1} and run_dir.name not in sheet and "flashnext" not in sheet
+    assert info == {"antworten": 19, "laeufe": 1, "fragen": 19} and run_dir.name not in sheet and "flashnext" not in sheet
     assert "werkzeug-01" not in (out / "schluessel.json").read_text(encoding="utf-8")  # prüft styrke selbst
     filled = "\n".join(
         line if i == 0 else line.rsplit(";", 2)[0] + ";2;" for i, line in enumerate(sheet.splitlines()) if line.strip()
@@ -435,3 +435,56 @@ def test_stage5_falls_back_to_largest_feasible_prompt(tmp_path):
     s5 = load("summary_s5.json")
     assert code == 0 and [r["big_target"] for r in s5["rows"]] == [9000] and s5["rows"][0]["big_ok"]
     assert s5["skipped"][0]["big_target"] == 128_000 and any("ersatzweise 9000" in line for line in lines)
+
+
+def test_ranking_page_and_import(tmp_path):
+    """Bewertungsseite: Antworten ohne Herkunft, wortgleiche vereint; Rangfolgen mehrerer Personen ergeben mittlere Plätze."""
+    import json as js
+
+    from styrke.quality import export_blind, import_rankings
+
+    def fake_run(name: str, answers: dict[str, str]) -> Path:
+        run = tmp_path / "runs" / name
+        (run / "answers").mkdir(parents=True)
+        lines = [
+            js.dumps({"id": qid, "kategorie": "denken", "thinking": "off", "frage": f"Frage {qid}?", "referenz": "Ref", "antwort": text})
+            for qid, text in answers.items()
+        ]
+        (run / "answers" / "s8.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return run
+
+    runs = [
+        fake_run("lauf-a", {"q1": "Gut.", "q2": "Nein."}),
+        fake_run("lauf-b", {"q1": "Mittel. </script><b>x</b>", "q2": "Nein."}),
+        fake_run("lauf-c", {"q1": "Schlecht.", "q2": "Ja."}),
+    ]
+    out = tmp_path / "bewertung"
+    assert export_blind(runs, out, seed=3) == {"antworten": 6, "laeufe": 3, "fragen": 2}
+    page = (out / "bewertung.html").read_text(encoding="utf-8")
+    assert "lauf-a" not in page and "http" not in page and "<\\/script><b>x" in page  # ohne Herkunft, ohne Netz, sicher eingebettet
+    data = js.loads(page.split('type="application/json">', 1)[1].split("</script>", 1)[0])
+    cards = {q["id"]: q["cards"] for q in data["questions"]}
+    assert len(cards["q1"]) == 3 and sorted(len(c["nrs"]) for c in cards["q2"]) == [1, 2]  # zweimal "Nein." ist eine Karte
+
+    key = js.loads((out / "schluessel.json").read_text(encoding="utf-8"))
+    nr = {(v["run"], v["id"]): int(k) for k, v in key.items()}
+
+    def sheet(name: str, q1: list[str]) -> Path:
+        path = tmp_path / f"bewertung_{name}.json"
+        ranking = {
+            "q1": [[nr[(run, "q1")]] for run in q1],
+            "q2": [[nr[("lauf-a", "q2")], nr[("lauf-b", "q2")]], [nr[("lauf-c", "q2")]]],
+        }
+        path.write_text(js.dumps({"format": "styrke-rangfolge-1", "bewerter": name, "rangfolgen": ranking}), encoding="utf-8")
+        return path
+
+    result = import_rankings(
+        [sheet("Anna", ["lauf-a", "lauf-b", "lauf-c"]), sheet("Ben", ["lauf-b", "lauf-a", "lauf-c"])], out / "schluessel.json"
+    )
+    assert result["bewerter"] == ["Anna", "Ben"] and result["bewertete_fragen"] == 4
+    assert list(result["laeufe"]) == ["lauf-a", "lauf-b", "lauf-c"] or list(result["laeufe"])[2] == "lauf-c"
+    # lauf-a: Plätze 1 und 2 bei q1, zweimal geteilter Platz 1,5 bei q2 -> Mittel 1,5; lauf-c ist immer Letzter.
+    assert result["laeufe"]["lauf-a"]["platz_mittel"] == 1.5 and result["laeufe"]["lauf-c"]["platz_mittel"] == 3.0
+    assert result["laeufe"]["lauf-a"]["erster_platz"] == 3 and result["laeufe"]["lauf-c"]["erster_platz"] == 0
+    with pytest.raises(ValueError):
+        import_rankings([out / "schluessel.json"], out / "schluessel.json")

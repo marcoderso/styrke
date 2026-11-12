@@ -133,10 +133,14 @@ Anders als in den Leistungsstufen bleiben die Antworten erhalten: `answers/s8.js
 
 ```bash
 .venv/bin/styrke bewertung export --out bewertung            # neuester Lauf je Zelle und Variante
-.venv/bin/styrke bewertung import bewertung/bogen.csv bewertung/schluessel.json
+.venv/bin/styrke bewertung import bewertung_anna.json bewertung_ben.json
 ```
 
-`export` schreibt `bogen.csv` (Frage, Referenzantwort, Antwort, leere Spalte für 0 bis 3 Punkte) mit den Antworten aller Läufe in gemischter Reihenfolge und ohne Herkunft, dazu `anleitung.md` für die bewertende Person. `schluessel.json` ordnet die Zeilen den Läufen zu und bleibt beim Auftraggeber. `import` rechnet aus dem ausgefüllten Bogen mittlere Punkte je Lauf und Kategorie.
+`export` schreibt `bewertung.html`: eine einzelne Datei, die ohne Netz im Browser läuft und sich per E-Mail weitergeben lässt. Sie zeigt je Frage die Referenzantwort und die Antworten aller Läufe, ohne Herkunft und in gemischter Reihenfolge. Wer bewertet, bringt die Antworten in eine Rangfolge (beste oben, schlechteste unten, mit der Maus oder den Pfeilen), bestätigt jede Frage und speichert am Ende eine Datei `bewertung_<name>.json`. Der Stand bleibt im Browser erhalten, man kann also unterbrechen. Wortgleiche Antworten erscheinen als eine Karte und teilen sich ihren Platz.
+
+`schluessel.json` ordnet die Antworten den Läufen zu und bleibt beim Auftraggeber. `import` liest beliebig viele Ergebnisdateien und nennt je Lauf den mittleren Platz (1 ist der beste) und wie oft er vorn lag; Einzelheiten je Kategorie stehen in `rangfolge.json`.
+
+Daneben entsteht wie bisher `bogen.csv` für eine Bewertung mit 0 bis 3 Punkten je Antwort (`import bogen.csv schluessel.json`).
 
 **Zu beachten:**
 
