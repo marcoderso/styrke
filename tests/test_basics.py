@@ -433,7 +433,12 @@ def test_sglang_command_and_gemma_without_reasoning_parser():
     assert "--entrypoint python3" in joined and "lmsysorg/sglang:latest -m sglang.launch_server " in joined
     assert "--model-path /models/gemma-4-31B-it-FP8-block" in joined and "--context-length 262144" in joined
     assert "--chunked-prefill-size 2048" in joined and "--max-running-requests 64" in joined
-    assert "--enable-metrics" in joined and "reasoning-parser" not in joined
+    assert "--enable-metrics" in joined and "reasoning-parser" not in joined  # für SGLang ist kein Parser belegt
+
+    vllm = " ".join(_engine_for("gemma4-vllm", "basis").build_command())
+    assert "--reasoning-parser gemma4" in vllm and "--enable-auto-tool-choice" in vllm and "--tool-call-parser gemma4" in vllm
+    matrix = load_matrix(REPO / "matrix.yaml", local="/nonexistent")
+    assert matrix.models["gemma4-31b"].thinking_mode("on") == {"body": {"chat_template_kwargs": {"enable_thinking": True}}}
 
 
 def test_all_cells_are_enabled_and_have_adapters():

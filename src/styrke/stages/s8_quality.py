@@ -131,9 +131,13 @@ async def run(ctx: StageContext) -> dict[str, Any]:
     out = ctx.store.dir / "answers" / "s8.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as fh:
+        total = len(modes) * len(questions["fragen"])
         for thinking in modes:
             for question in questions["fragen"]:
                 rec = await ask(ctx, question, thinking, questions["werkzeuge"])
+                # Fortschritt für den Betrachter: Diese Stufe schreibt keine Datensätze nach requests.jsonl.
+                ctx.store.event("question", stage=8, id=question["id"], thinking=thinking, n=len(records) + 1, total=total,
+                                ok=rec["check"].get("ok"))
                 records.append(rec)
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 fh.flush()

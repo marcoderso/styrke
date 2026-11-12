@@ -165,6 +165,12 @@ class RunState:
             self.activity = f"große Anfrage mit {e.get('big_target')} Tokens läuft"
         elif kind == "injection_end":
             self.activity = "Erholung nach der großen Anfrage"
+        elif kind == "question":
+            self.activity = f"Frage {e.get('n')} von {e.get('total')} (Nachdenken {e.get('thinking')})"
+            count = self.counts.setdefault(stage, {"n": 0, "errors": 0})
+            count["n"] += 1
+            if e.get("ok") is False:
+                count["errors"] += 1
         elif kind == "run_end":
             self.finished = e.get("exit_code", 0)
             self.current = None

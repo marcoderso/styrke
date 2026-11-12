@@ -71,11 +71,15 @@ models:
     # (Gewichte blockweise FP8, erstellt mit LLM Compressor).
     repo: RedHatAI/gemma-4-31B-it-FP8-block
     max_context: 262144
-    # Kein Reasoning-Parser eingetragen: Trennt die Engine das Nachdenken nicht ab, erscheint es
-    # als Teil der Antwort. Die Zeit bis zum ersten Token stimmt trotzdem.
+    # vLLM nach dem Rezept des Projekts (recipes.vllm.ai, gemma-4-31B-it): eigene Parser für
+    # Nachdenken und Werkzeugaufrufe; ohne sie lehnt vLLM Anfragen mit Werkzeugen ab.
+    # Für SGLang ist kein Parser belegt: Dort erscheint das Nachdenken womöglich als Teil der
+    # Antwort, und Werkzeugaufrufe werden nicht erkannt.
+    engine_args:
+      vllm: {"reasoning-parser?": gemma4, "enable-auto-tool-choice?": true, "tool-call-parser?": gemma4}
     thinking:
-      "off": {}
-      "on": {system_prefix: "<|think|>"}
+      "off": {body: {chat_template_kwargs: {enable_thinking: false}}}
+      "on": {body: {chat_template_kwargs: {enable_thinking: true}}}
 
   qwen36-35b-a3b:
     repo: Qwen/Qwen3.6-35B-A3B-FP8
