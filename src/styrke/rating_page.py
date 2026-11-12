@@ -18,9 +18,10 @@ PAGE = r"""<!doctype html>
 <style>
 :root{color-scheme:light only;--bg:#f6f5f1;--card:#fff;--ink:#1f1e1d;--ink2:#5f5e58;--line:#dcdbd3;--accent:#1f5fbf;--soft:#ecebe5;
   --good:#1a7f4b;--mid:#9a6700;--bad:#b3261e}
-*{box-sizing:border-box}html{background:var(--bg)}body{margin:0;display:flex;flex-direction:column;height:100vh;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+/* Darstellung auf 80 %: Bei dieser Größe passen vier Antworten gut nebeneinander. Größe ändern: beide Zahlen in --zoom und zoom. */
+*{box-sizing:border-box}html{--zoom:.8;zoom:.8;background:var(--bg)}body{margin:0;display:flex;flex-direction:column;height:calc(100vh / var(--zoom));background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
 header.top{flex:none;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-header.top strong{margin-right:auto}main{flex:1;min-height:0;display:flex;flex-direction:column;width:100%;max-width:1500px;margin:0 auto;padding:12px 16px 14px}
+header.top strong{margin-right:auto}main{flex:1;min-height:0;display:flex;flex-direction:column;width:100%;max-width:calc(1500px / var(--zoom));margin:0 auto;padding:12px 16px 14px}
 input[type=text]{font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);width:190px}
 button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}button:disabled{opacity:.45;cursor:default}
@@ -49,7 +50,7 @@ h1{font-size:20px;margin:6px 0;white-space:pre-wrap}.muted{color:var(--ink2);fon
 .verdict .teils[aria-pressed=true]{background:var(--mid);border-color:var(--mid)}.verdict .schlecht[aria-pressed=true]{background:var(--bad);border-color:var(--bad)}
 nav{flex:none;display:flex;gap:10px;justify-content:space-between;margin-top:10px;flex-wrap:wrap}
 /* Kleine Fenster: die Seite rollt als Ganzes, jede Spalte hat eine feste Höhe. */
-@media (max-width:700px),(max-height:620px){body{display:block;height:auto}main{display:block}.cols{grid-auto-columns:88vw;grid-template-rows:none}.col{height:72vh}}
+@media (max-width:700px),(max-height:620px){body{display:block;height:auto}main{display:block}.cols{grid-auto-columns:88vw;grid-template-rows:none}.col{height:calc(72vh / var(--zoom))}}
 </style></head><body>
 <header class="top"><strong>Antworten bewerten</strong>
 <label class="muted">Dein Name <input type="text" id="rater" placeholder="Vorname genügt"></label>
