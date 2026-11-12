@@ -420,10 +420,10 @@ def cmd_bewertung(args: argparse.Namespace) -> int:
     Path(args.out).mkdir(parents=True, exist_ok=True)
     (Path(args.out) / "urteile.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"{len(result['bewerter'])} Bewertende ({', '.join(result['bewerter'])}), {result['urteile']} Urteile.")
-    print(f"  {'Modell':<40} {'Punkte':>8} {'gut':>5} {'teils':>6} {'schlecht':>9}")
+    print(f"  {'Modell':<40} {'Punkte':>7} {'je Antwort':>11} {'gut':>5} {'teils':>6} {'schlecht':>9}")
     for model, info in result["modelle"].items():
-        print(f"  {model:<40} {info['punkte']:>7.1f}% {info['gut']:>5} {info['teils']:>6} {info['schlecht']:>9}")
-    print(f"Punkte: Anteil der erreichbaren, gut zählt 2, teils 1, schlecht 0. Je Kategorie: {Path(args.out) / 'urteile.json'}")
+        print(f"  {model:<40} {info['punkte']:>7} {info['mittel']:>11.2f} {info['gut']:>5} {info['teils']:>6} {info['schlecht']:>9}")
+    print(f"Wertung: gut 2 Punkte, teils 1, schlecht -1. Je Kategorie: {Path(args.out) / 'urteile.json'}")
     return 0
 
 

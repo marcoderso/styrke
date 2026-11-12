@@ -150,7 +150,7 @@ Anders als in den Leistungsstufen bleiben die Antworten erhalten: `answers/s8.js
 
 Verglichen werden Modelle, nicht Läufe: Die Antwortgüte hängt am Modell und nicht an der Engine. Liegen für ein Modell mehrere Läufe vor, zählt der neueste.
 
-`schluessel.json` ordnet die Antworten den Modellen zu und bleibt beim Auftraggeber. `import` liest beliebig viele Ergebnisdateien und nennt je Modell den Anteil der erreichbaren Punkte (gut zählt 2, teils 1, schlecht 0) und die Zahl der Urteile; je Kategorie steht es in `bewertung/urteile.json`.
+`schluessel.json` ordnet die Antworten den Modellen zu und bleibt beim Auftraggeber. `import` liest beliebig viele Ergebnisdateien und nennt je Modell die Punkte, den Durchschnitt je Antwort und die Zahl der Urteile (gut zählt 2 Punkte, teils 1, schlecht −1: Eine schlechte Antwort kostet etwas); je Kategorie steht es in `bewertung/urteile.json`.
 
 **Zu beachten:**
 

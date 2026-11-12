@@ -464,8 +464,8 @@ def test_rating_page_and_verdict_import(tmp_path):
     result = import_verdicts([sheet("Anna", "gut", "schlecht"), sheet("Ben", "teils", "schlecht")], out / "schluessel.json")
     assert result["bewerter"] == ["Anna", "Ben"] and result["urteile"] == 8 and list(result["modelle"]) == ["modell-a", "modell-b"]
     a, b = result["modelle"]["modell-a"], result["modelle"]["modell-b"]
-    assert (a["gut"], a["teils"], a["schlecht"], a["punkte"]) == (3, 1, 0, 87.5)  # (2+1+2+2) von 8 Punkten
-    assert (b["gut"], b["schlecht"], b["punkte"]) == (2, 2, 50.0)
+    assert (a["gut"], a["teils"], a["schlecht"], a["punkte"], a["mittel"]) == (3, 1, 0, 7, 1.75)  # 2+1+2+2
+    assert (b["gut"], b["schlecht"], b["punkte"], b["mittel"]) == (2, 2, 2, 0.5)  # 2+2-1-1: schlecht kostet einen Punkt
     with pytest.raises(ValueError):
         import_verdicts([out / "schluessel.json"], out / "schluessel.json")
     # Ein Ergebnis von einer anderen Seite (späterer Export, neu gemischt) wird abgelehnt statt falsch zugeordnet.

@@ -102,7 +102,7 @@ def _tool_matches(call: dict[str, Any], want: dict[str, Any]) -> bool:
 
 # -- Blindbewertung -------------------------------------------------------------------
 
-VERDICTS = {"gut": 2, "teils": 1, "schlecht": 0}
+VERDICTS = {"gut": 2, "teils": 1, "schlecht": -1}  # eine schlechte Antwort kostet Punkte, statt nur keine zu bringen
 
 
 def collect_manual(run_dirs: list[str | Path], thinking: str = "off") -> list[dict[str, Any]]:
@@ -169,8 +169,8 @@ def export_blind(run_dirs: list[str | Path], out_dir: str | Path, thinking: str 
 def import_verdicts(files: list[str | Path], key_file: str | Path) -> dict[str, Any]:
     """Liest die Urteile aus der Bewertungsseite (eine Datei je Person) und zählt sie je Modell aus.
 
-    ``punkte`` ist der Anteil der erreichbaren Punkte in Prozent: gut zählt 2,
-    teils 1, schlecht 0.
+    Gut zählt 2 Punkte, teils 1, schlecht -1. ``punkte`` ist die Summe,
+    ``mittel`` der Durchschnitt je Antwort (zwischen -1 und 2).
     """
     key = json.loads(Path(key_file).read_text(encoding="utf-8"))
     sheet_id = hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:10]
@@ -197,16 +197,20 @@ def import_verdicts(files: list[str | Path], key_file: str | Path) -> dict[str, 
                 per = counts.setdefault(info["model"], {}).setdefault(info["kategorie"], {v: 0 for v in VERDICTS})
                 per[verdict] += 1
 
-    def score(c: dict[str, int]) -> float:
+    def points(c: dict[str, int]) -> int:
+        return sum(VERDICTS[v] * k for v, k in c.items())
+
+    def average(c: dict[str, int]) -> float:
         n = sum(c.values())
-        return round(100 * sum(VERDICTS[v] * k for v, k in c.items()) / (2 * n), 1) if n else 0.0
+        return round(points(c) / n, 2) if n else 0.0
 
     result: dict[str, Any] = {"bewerter": raters, "urteile": total, "modelle": {}}
     for model, categories in counts.items():
         every = {v: sum(c[v] for c in categories.values()) for v in VERDICTS}
         result["modelle"][model] = {
-            "punkte": score(every), **every, "n": sum(every.values()),
-            "kategorien": {cat: {"punkte": score(c), **c} for cat, c in sorted(categories.items())},
+            "punkte": points(every), "mittel": average(every), **every, "n": sum(every.values()),
+            "kategorien": {cat: {"punkte": points(c), "mittel": average(c), **c} for cat, c in sorted(categories.items())},
         }
-    result["modelle"] = dict(sorted(result["modelle"].items(), key=lambda item: -item[1]["punkte"]))
+    result["modelle"] = dict(sorted(result["modelle"].items(), key=lambda item: -item[1]["mittel"]))
+    result["wertung"] = dict(VERDICTS)
     return result
