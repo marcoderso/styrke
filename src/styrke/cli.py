@@ -387,6 +387,11 @@ def cmd_bewertung(args: argparse.Namespace) -> int:
 
     if args.action == "export":
         run_dirs = [Path(p) for p in args.paths] or discover(load_matrix(args.matrix).host.runs_dir)
+        old_key = Path(args.out) / "schluessel.json"
+        if old_key.is_file():  # der alte Schlüssel gehört zu schon verteilten Seiten und darf nicht verloren gehen
+            keep = old_key.with_name(f"schluessel_{time.strftime('%Y%m%d-%H%M%S', time.localtime(old_key.stat().st_mtime))}.json")
+            old_key.replace(keep)
+            print(f"Vorhandenen Schlüssel aufbewahrt als {keep}")
         result = export_blind(run_dirs, args.out, thinking=args.thinking)
         if not result["antworten"]:
             print("Fehler: In den Läufen liegen keine von Hand zu bewertenden Antworten der Stufe 8.", file=sys.stderr)

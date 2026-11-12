@@ -468,3 +468,8 @@ def test_rating_page_and_verdict_import(tmp_path):
     assert (b["gut"], b["schlecht"], b["punkte"]) == (2, 2, 50.0)
     with pytest.raises(ValueError):
         import_verdicts([out / "schluessel.json"], out / "schluessel.json")
+    # Ein Ergebnis von einer anderen Seite (späterer Export, neu gemischt) wird abgelehnt statt falsch zugeordnet.
+    wrong = sheet("Carl", "gut", "gut")
+    wrong.write_text(wrong.read_text(encoding="utf-8").replace('"format"', '"bogen": "0000000000", "format"'), encoding="utf-8")
+    with pytest.raises(ValueError, match="anderen Bewertungsseite"):
+        import_verdicts([wrong], out / "schluessel.json")

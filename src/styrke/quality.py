@@ -173,6 +173,7 @@ def import_verdicts(files: list[str | Path], key_file: str | Path) -> dict[str, 
     teils 1, schlecht 0.
     """
     key = json.loads(Path(key_file).read_text(encoding="utf-8"))
+    sheet_id = hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:10]
     counts: dict[str, dict[str, dict[str, int]]] = {}
     raters: list[str] = []
     total = 0
@@ -180,6 +181,12 @@ def import_verdicts(files: list[str | Path], key_file: str | Path) -> dict[str, 
         data = json.loads(Path(file).read_text(encoding="utf-8"))
         if data.get("format") != "styrke-urteile-1":
             raise ValueError(f"{file} ist keine Ergebnisdatei der Bewertungsseite")
+        if data.get("bogen") and data["bogen"] != sheet_id:
+            # Jeder Export mischt neu. Ein Schlüssel aus einem späteren Export würde die Urteile falschen Modellen zuordnen.
+            raise ValueError(
+                f"{file} gehört zu einer anderen Bewertungsseite als {key_file} (Bogen {data['bogen']}, Schlüssel {sheet_id}). "
+                "Nach dem Verteilen der Seite wurde vermutlich neu exportiert; es zählt der Schlüssel vom selben Export."
+            )
         raters.append(data.get("bewerter") or Path(file).stem)
         for verdicts in (data.get("urteile") or {}).values():
             for nr, verdict in verdicts.items():
