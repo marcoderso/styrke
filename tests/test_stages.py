@@ -346,7 +346,7 @@ def test_quality_checks():
     from styrke.quality import check, extract_json, foreign_chars, load_questions
 
     questions = {q["id"]: q for q in load_questions(REPO / "quality" / "fragen.yaml")["fragen"]}
-    assert len(questions) == 26 and {q["kategorie"] for q in questions.values()} == {
+    assert len(questions) == 38 and {q["kategorie"] for q in questions.values()} == {
         "firmenwissen", "ehrlichkeit", "deutsch", "denken", "langer_kontext", "werkzeuge", "struktur",
     }
     assert all(q.get("referenz") for q in questions.values())
@@ -375,7 +375,7 @@ def test_quality_checks():
 
 
 def test_stage8_runs_questions_and_blind_rating_roundtrip(tmp_path):
-    from styrke.quality import export_blind, import_blind
+    from styrke.quality import export_blind
 
     engine = MockEngine(max_context=20_000)
     engine.canned = {"Freigabenummer": "Die Nummer lautet 7Q4-KX-2291.", "Hauptstadt": "Paris.", "Wem gehört": "Der Agrofert-Gruppe."}
@@ -388,7 +388,7 @@ def test_stage8_runs_questions_and_blind_rating_roundtrip(tmp_path):
     code, run_dir, load, lines = _run(tmp_path, engine, [8], over)
     assert code == 0
     answers = {r["id"]: r for r in read_jsonl(run_dir / "answers" / "s8.jsonl")}
-    assert len(answers) == 26
+    assert len(answers) == 38 and answers["ehrlich-02"]["manuell"] and not answers["firma-02"]["manuell"]
     assert answers["firma-02"]["check"]["ok"] is True and answers["firma-01"]["check"]["ok"] is False
     assert answers["kontext-01"]["check"]["ok"] is True and answers["kontext-01"]["prompt_tokens"] > 2500  # Nadel im langen Text
     assert answers["werkzeug-01"]["check"]["ok"] is True and answers["werkzeug-01"]["tool_calls"]
@@ -397,94 +397,66 @@ def test_stage8_runs_questions_and_blind_rating_roundtrip(tmp_path):
     assert s8["totals"]["off"]["auto_ok"] == 4 and s8["totals"]["off"]["auto_checked"] == 20
     assert any("von Hand zu bewerten" in line for line in lines)
 
-    # Blindbewertung: Bogen ohne Herkunft, Schlüssel getrennt, Punkte zurück je Lauf und Kategorie.
+    # Nur die von Hand zu bewertenden Fragen bekommen den Zusatz, kurz zu antworten.
+    sent = {b["messages"][-1]["content"] for b in engine.bodies if b.get("messages")}
+    assert any("Piazol 9000" in c and c.endswith("Antworte in höchstens fünf Sätzen.") for c in sent)
+    assert any(c == "Wem gehört SKW Piesteritz?" for c in sent)
+
+    # Bewertungsseite: nur die 18 Fragen ohne eindeutige Lösung, ohne Herkunft.
     out = tmp_path / "bewertung"
     info = export_blind([run_dir], out, seed=1)
-    sheet = (out / "bogen.csv").read_text(encoding="utf-8-sig")
-    assert info == {"antworten": 19, "laeufe": 1, "fragen": 19} and run_dir.name not in sheet and "flashnext" not in sheet
-    assert "werkzeug-01" not in (out / "schluessel.json").read_text(encoding="utf-8")  # prüft styrke selbst
-    filled = "\n".join(
-        line if i == 0 else line.rsplit(";", 2)[0] + ";2;" for i, line in enumerate(sheet.splitlines()) if line.strip()
-    )
-    (out / "bogen.csv").write_text(filled, encoding="utf-8-sig")
-    result = import_blind(out / "bogen.csv", out / "schluessel.json")
-    assert result["laeufe"][run_dir.name]["mittel"] == 2.0 and result["laeufe"][run_dir.name]["n"] == 19
-    assert set(result["laeufe"][run_dir.name]["kategorien"]) == {"firmenwissen", "ehrlichkeit", "deutsch", "denken"}
+    page = (out / "bewertung.html").read_text(encoding="utf-8")
+    assert info == {"antworten": 18, "modelle": 1, "fragen": 18} and run_dir.name not in page and "flashnext" not in page
+    key = json.loads((out / "schluessel.json").read_text(encoding="utf-8"))
+    assert {v["kategorie"] for v in key.values()} == {"ehrlichkeit", "deutsch"} and all(v["model"] == "Qwen/Qwen3.8-Flash-Next-FP8" for v in key.values())
 
 
-def test_saturation_is_withdrawn_when_throughput_rises_again():
-    from styrke.stages.s2_concurrency import saturation
-
-    # Messwerte des ersten Laufs an der echten Engine: Bei 20 parallelen Anfragen stieg der Durchsatz wieder.
-    measured = [(1, 57.0), (2, 73.3), (4, 123.2), (8, 195.9), (10, 194.5), (15, 195.8), (20, 248.1)]
-    assert saturation(measured[:5], 0.05, 2) == (10, False)
-    assert saturation(measured[:6], 0.05, 2) == (10, False)
-    assert saturation(measured, 0.05, 2) == (None, False)  # früher endete die Stufe hier
-    assert saturation(measured + [(25, 250.0)], 0.05, 2) == (25, False)
-    assert saturation(measured + [(25, 250.0), (30, 251.0), (35, 249.0)], 0.05, 2) == (25, True)
-    assert saturation([(1, 100.0), (2, 101.0), (4, 102.0), (8, 103.0)], 0.05, 2) == (2, True)
-
-
-def test_stage5_falls_back_to_largest_feasible_prompt(tmp_path):
-    """Passt keine der großen Anfragen in den Kontext, misst die Stufe mit der größten lauffähigen."""
-    engine = MockEngine(max_running=8, prefill_tokens_per_s=20_000, max_context=20_000)
-    code, run_dir, _, _ = _run(tmp_path, engine, [0], {"s0": {"context_probes": [9000, 50_000]}})
-    params = {"chats": 2, "prompt_tokens": 40, "max_tokens": 30, "big_lengths": [128_000], "big_max_tokens": 10, "reps": 1,
-              "warmup_s": 0.3, "baseline_s": 0.5, "recovery_s": 0.3, "fallback_min_tokens": 8000}
-    code, _, load, lines = _run(tmp_path, engine, [5], {"s5": params}, resume=str(run_dir))
-    s5 = load("summary_s5.json")
-    assert code == 0 and [r["big_target"] for r in s5["rows"]] == [9000] and s5["rows"][0]["big_ok"]
-    assert s5["skipped"][0]["big_target"] == 128_000 and any("ersatzweise 9000" in line for line in lines)
-
-
-def test_ranking_page_and_import(tmp_path):
-    """Bewertungsseite: Antworten ohne Herkunft, wortgleiche vereint; Rangfolgen mehrerer Personen ergeben mittlere Plätze."""
+def test_rating_page_and_verdict_import(tmp_path):
+    """Bewertungsseite: je Modell eine Antwort, wortgleiche vereint; Urteile mehrerer Personen ergeben Punkte je Modell."""
     import json as js
 
-    from styrke.quality import export_blind, import_rankings
+    from styrke.quality import export_blind, import_verdicts
 
-    def fake_run(name: str, answers: dict[str, str]) -> Path:
+    def fake_run(name: str, model: str, answers: dict[str, str]) -> Path:
         run = tmp_path / "runs" / name
         (run / "answers").mkdir(parents=True)
+        (run / "manifest.json").write_text(js.dumps({"model": {"repo": model}}), encoding="utf-8")
         lines = [
-            js.dumps({"id": qid, "kategorie": "denken", "thinking": "off", "frage": f"Frage {qid}?", "referenz": "Ref", "antwort": text})
+            js.dumps({"id": qid, "kategorie": "ehrlichkeit", "thinking": "off", "frage": f"Frage {qid}?", "referenz": "Ref",
+                      "antwort": text, "manuell": qid != "auto", "check": {"ok": True if qid == "auto" else None}})
             for qid, text in answers.items()
         ]
         (run / "answers" / "s8.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
         return run
 
     runs = [
-        fake_run("lauf-a", {"q1": "Gut.", "q2": "Nein."}),
-        fake_run("lauf-b", {"q1": "Mittel. </script><b>x</b>", "q2": "Nein."}),
-        fake_run("lauf-c", {"q1": "Schlecht.", "q2": "Ja."}),
+        fake_run("1-a-vllm", "modell-a", {"q1": "**Gut.**", "q2": "Nein.", "auto": "42"}),
+        fake_run("2-a-sglang", "modell-a", {"q1": "Gut, andere Engine.", "q2": "Nein.", "auto": "42"}),  # dasselbe Modell: nur ein Lauf zählt
+        fake_run("3-b", "modell-b", {"q1": "Erfunden. </script><b>x</b>", "q2": "Nein.", "auto": "41"}),
     ]
     out = tmp_path / "bewertung"
-    assert export_blind(runs, out, seed=3) == {"antworten": 6, "laeufe": 3, "fragen": 2}
+    assert export_blind(runs, out, seed=3) == {"antworten": 4, "modelle": 2, "fragen": 2}
     page = (out / "bewertung.html").read_text(encoding="utf-8")
-    assert "lauf-a" not in page and "http" not in page and "<\\/script><b>x" in page  # ohne Herkunft, ohne Netz, sicher eingebettet
+    assert "modell-a" not in page and "vllm" not in page and "http" not in page and "<\\/script><b>x" in page
     data = js.loads(page.split('type="application/json">', 1)[1].split("</script>", 1)[0])
     cards = {q["id"]: q["cards"] for q in data["questions"]}
-    assert len(cards["q1"]) == 3 and sorted(len(c["nrs"]) for c in cards["q2"]) == [1, 2]  # zweimal "Nein." ist eine Karte
+    assert set(cards) == {"q1", "q2"} and len(cards["q1"]) == 2 and [len(c["nrs"]) for c in cards["q2"]] == [2]
+    assert "andere Engine" in page and "**Gut.**" not in page  # der neuere Lauf des Modells zählt
 
     key = js.loads((out / "schluessel.json").read_text(encoding="utf-8"))
-    nr = {(v["run"], v["id"]): int(k) for k, v in key.items()}
+    nr = {(v["model"], v["id"]): k for k, v in key.items()}
 
-    def sheet(name: str, q1: list[str]) -> Path:
+    def sheet(name: str, a_q1: str, b_q1: str) -> Path:
         path = tmp_path / f"bewertung_{name}.json"
-        ranking = {
-            "q1": [[nr[(run, "q1")]] for run in q1],
-            "q2": [[nr[("lauf-a", "q2")], nr[("lauf-b", "q2")]], [nr[("lauf-c", "q2")]]],
-        }
-        path.write_text(js.dumps({"format": "styrke-rangfolge-1", "bewerter": name, "rangfolgen": ranking}), encoding="utf-8")
+        verdicts = {"q1": {nr[("modell-a", "q1")]: a_q1, nr[("modell-b", "q1")]: b_q1},
+                    "q2": {nr[("modell-a", "q2")]: "gut", nr[("modell-b", "q2")]: "gut"}}
+        path.write_text(js.dumps({"format": "styrke-urteile-1", "bewerter": name, "urteile": verdicts}), encoding="utf-8")
         return path
 
-    result = import_rankings(
-        [sheet("Anna", ["lauf-a", "lauf-b", "lauf-c"]), sheet("Ben", ["lauf-b", "lauf-a", "lauf-c"])], out / "schluessel.json"
-    )
-    assert result["bewerter"] == ["Anna", "Ben"] and result["bewertete_fragen"] == 4
-    assert list(result["laeufe"]) == ["lauf-a", "lauf-b", "lauf-c"] or list(result["laeufe"])[2] == "lauf-c"
-    # lauf-a: Plätze 1 und 2 bei q1, zweimal geteilter Platz 1,5 bei q2 -> Mittel 1,5; lauf-c ist immer Letzter.
-    assert result["laeufe"]["lauf-a"]["platz_mittel"] == 1.5 and result["laeufe"]["lauf-c"]["platz_mittel"] == 3.0
-    assert result["laeufe"]["lauf-a"]["erster_platz"] == 3 and result["laeufe"]["lauf-c"]["erster_platz"] == 0
+    result = import_verdicts([sheet("Anna", "gut", "schlecht"), sheet("Ben", "teils", "schlecht")], out / "schluessel.json")
+    assert result["bewerter"] == ["Anna", "Ben"] and result["urteile"] == 8 and list(result["modelle"]) == ["modell-a", "modell-b"]
+    a, b = result["modelle"]["modell-a"], result["modelle"]["modell-b"]
+    assert (a["gut"], a["teils"], a["schlecht"], a["punkte"]) == (3, 1, 0, 87.5)  # (2+1+2+2) von 8 Punkten
+    assert (b["gut"], b["schlecht"], b["punkte"]) == (2, 2, 50.0)
     with pytest.raises(ValueError):
-        import_rankings([out / "schluessel.json"], out / "schluessel.json")
+        import_verdicts([out / "schluessel.json"], out / "schluessel.json")

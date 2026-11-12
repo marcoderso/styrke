@@ -115,36 +115,46 @@ Nach dem ersten nicht getragenen Abschnitt folgt noch einer zur Bestätigung, da
 
 **Frage:** Wie gut sind die Antworten?
 
-**Ablauf:** Jede Frage des Fragensatzes `quality/fragen.yaml` geht einmal ohne und einmal mit Nachdenken an das Modell. Die 26 Fragen verteilen sich auf sieben Kategorien:
+**Ablauf:** Jede Frage des Fragensatzes `quality/fragen.yaml` geht einmal ohne und einmal mit Nachdenken an das Modell. Die 38 Fragen zerfallen in zwei Gruppen.
+
+Fragen mit eindeutiger Lösung prüft styrke selbst (20 Fragen):
 
 | Kategorie | Fragen | Prüfung |
 | --- | --- | --- |
-| `firmenwissen` | 5 | feste Begriffe, dazu von Hand |
-| `ehrlichkeit` | 4 | von Hand: Gibt das Modell zu, was es nicht wissen kann, statt etwas zu erfinden? |
-| `deutsch` | 4 | teils feste Begriffe, dazu von Hand; fremde Schriftzeichen werden gezählt |
-| `denken` | 6 | eindeutige Lösung, automatisch |
-| `langer_kontext` | 2 | eine Angabe in einem Text von 60.000 und 180.000 Tokens wiederfinden, automatisch |
-| `werkzeuge` | 4 | richtiges Werkzeug mit richtigen Angaben, automatisch |
-| `struktur` | 1 | gültiges JSON mit den verlangten Schlüsseln und Werten, automatisch |
+| `firmenwissen` | 5 | feste Begriffe müssen vorkommen |
+| `deutsch` | 2 | feste Begriffe (Erklärung, Rechtschreibkorrektur) |
+| `denken` | 6 | eindeutige Lösung |
+| `langer_kontext` | 2 | eine Angabe in einem Text von 60.000 und 180.000 Tokens wiederfinden |
+| `werkzeuge` | 4 | richtiges Werkzeug mit richtigen Angaben |
+| `struktur` | 1 | gültiges JSON mit den verlangten Schlüsseln und Werten |
+
+Fragen ohne eindeutige Lösung beurteilen Menschen (18 Fragen):
+
+| Kategorie | Fragen | Worum es geht |
+| --- | --- | --- |
+| `ehrlichkeit` | 16 | Fallen: erfundene Produkte, Personen und Normen, falsche Annahmen in der Frage, Angaben, die niemand wissen kann. Gut ist, wer das sagt, statt etwas zu erfinden |
+| `deutsch` | 2 | eine Rundmail und eine Zusammenfassung |
+
+Diese 18 Fragen bekommen den Zusatz „Antworte in höchstens fünf Sätzen.", damit sich die Antworten nebeneinander lesen lassen (`manual_suffix`).
 
 Anders als in den Leistungsstufen bleiben die Antworten erhalten: `answers/s8.jsonl` enthält je Frage die Antwort, die Referenzantwort und das Ergebnis der Prüfung.
 
 **Bewertung von Hand, blind:**
 
 ```bash
-.venv/bin/styrke bewertung export --out bewertung            # neuester Lauf je Zelle und Variante
+.venv/bin/styrke bewertung export
 .venv/bin/styrke bewertung import bewertung_anna.json bewertung_ben.json
 ```
 
-`export` schreibt `bewertung.html`: eine einzelne Datei, die ohne Netz im Browser läuft und sich per E-Mail weitergeben lässt. Sie zeigt je Frage die Referenzantwort und die Antworten aller Läufe, ohne Herkunft und in gemischter Reihenfolge. Wer bewertet, bringt die Antworten in eine Rangfolge (beste oben, schlechteste unten, mit der Maus oder den Pfeilen), bestätigt jede Frage und speichert am Ende eine Datei `bewertung_<name>.json`. Der Stand bleibt im Browser erhalten, man kann also unterbrechen. Wortgleiche Antworten erscheinen als eine Karte und teilen sich ihren Platz.
+`export` schreibt `bewertung/bewertung.html`: eine einzelne Datei, die ohne Netz im Browser läuft und sich per E-Mail weitergeben lässt. Sie zeigt je Frage die Referenzantwort und nebeneinander je Modell eine Antwort, ohne Herkunft und in gemischter Reihenfolge, mit dargestelltem Markdown. Unter jeder Antwort steht ein Urteil zur Wahl: gut, teils oder schlecht. Am Ende speichert die Seite eine Datei `bewertung_<name>.json`. Der Stand bleibt im Browser erhalten, man kann also unterbrechen.
 
-`schluessel.json` ordnet die Antworten den Läufen zu und bleibt beim Auftraggeber. `import` liest beliebig viele Ergebnisdateien und nennt je Lauf den mittleren Platz (1 ist der beste) und wie oft er vorn lag; Einzelheiten je Kategorie stehen in `rangfolge.json`.
+Verglichen werden Modelle, nicht Läufe: Die Antwortgüte hängt am Modell und nicht an der Engine. Liegen für ein Modell mehrere Läufe vor, zählt der neueste.
 
-Daneben entsteht wie bisher `bogen.csv` für eine Bewertung mit 0 bis 3 Punkten je Antwort (`import bogen.csv schluessel.json`).
+`schluessel.json` ordnet die Antworten den Modellen zu und bleibt beim Auftraggeber. `import` liest beliebig viele Ergebnisdateien und nennt je Modell den Anteil der erreichbaren Punkte (gut zählt 2, teils 1, schlecht 0) und die Zahl der Urteile; je Kategorie steht es in `bewertung/urteile.json`.
 
 **Zu beachten:**
 
-- Die Referenzantworten zum Firmenwissen stammen aus öffentlichen Quellen, die im Fragensatz genannt sind. Sie sollten vor der Bewertung von jemandem aus dem Unternehmen gegengelesen werden.
-- Die Werkzeuge sind nachgebaut: Geprüft wird, ob das Modell das richtige Werkzeug verlangt; ausgeführt wird nichts. Ob eine Engine Werkzeugaufrufe überhaupt erkennt, hängt von ihren Startoptionen ab (`engine_args` der Modelle in der Testmatrix). Lehnt sie ab, steht der Fehler im Ergebnis.
+- Die Referenzantworten zum Firmenwissen stammen aus öffentlichen Quellen, die im Fragensatz genannt sind. Sie sollten von jemandem aus dem Unternehmen gegengelesen werden. Die erfundenen Namen in den Fallen sind für die Fragen ausgedacht.
+- Die Werkzeuge sind nachgebaut: Geprüft wird, ob das Modell das richtige Werkzeug verlangt; ausgeführt wird nichts. Ob eine Engine Werkzeugaufrufe überhaupt erkennt, hängt von ihren Startoptionen ab (`engine_args` der Modelle in der Testmatrix). `styrke show` nennt bei einer nicht bestandenen Frage, welcher Aufruf stattdessen kam.
 - Jede Frage läuft einmal. Bei den eingestellten Sampling-Werten kann dieselbe Frage beim nächsten Mal anders ausgehen; knappe Unterschiede zwischen zwei Modellen sagen deshalb wenig.
-- Eine automatische Prüfung auf feste Begriffe ist streng in eine Richtung: Sie erkennt fehlende Angaben, aber keine zusätzlichen falschen. Dafür ist die Bewertung von Hand da.
+- Eine automatische Prüfung auf feste Begriffe ist streng in eine Richtung: Sie erkennt fehlende Angaben, aber keine zusätzlichen falschen.

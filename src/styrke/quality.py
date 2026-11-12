@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 import hashlib
 import json
 import random
@@ -75,6 +74,9 @@ def check(question: dict[str, Any], answer: str, tool_calls: list[dict[str, Any]
             results["werkzeug"] = not tool_calls
         else:
             results["werkzeug"] = any(_tool_matches(call, want) for call in tool_calls)
+        if not results["werkzeug"]:  # festhalten, was stattdessen kam
+            calls = [f"{(c.get('function') or {}).get('name')}({(c.get('function') or {}).get('arguments')})" for c in tool_calls]
+            results["fehlt"] = results.get("fehlt", []) + ["Werkzeugaufruf: " + ("; ".join(calls)[:200] if calls else "keiner")]
     manual = question.get("pruefung") == "manuell" or not results
     return {"ok": None if manual else all(v for k, v in results.items() if k != "fehlt"), **results}
 
@@ -100,126 +102,96 @@ def _tool_matches(call: dict[str, Any], want: dict[str, Any]) -> bool:
 
 # -- Blindbewertung -------------------------------------------------------------------
 
+VERDICTS = {"gut": 2, "teils": 1, "schlecht": 0}
 
-def export_blind(run_dirs: list[str | Path], out_dir: str | Path, thinking: str = "off", seed: int | None = None) -> dict[str, int]:
-    """Schreibt den Bewertungsbogen: alle Antworten gemischt und ohne Herkunft, dazu getrennt den Schlüssel."""
-    rows: list[dict[str, Any]] = []
+
+def collect_manual(run_dirs: list[str | Path], thinking: str = "off") -> list[dict[str, Any]]:
+    """Die von Hand zu bewertenden Antworten, je Modell aus einem Lauf.
+
+    Die Antwortgüte hängt am Modell, nicht an der Engine. Liegen für ein Modell
+    mehrere Läufe vor, zählt der zuletzt genannte, also der neueste.
+    """
+    by_model: dict[str, list[dict[str, Any]]] = {}
     for run_dir in run_dirs:
         path = Path(run_dir) / "answers" / "s8.jsonl"
         if not path.is_file():
             continue
+        try:
+            manifest = json.loads((Path(run_dir) / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            manifest = {}
+        model = (manifest.get("model") or {}).get("repo") or Path(run_dir).name
+        rows = []
         for line in path.read_text(encoding="utf-8").splitlines():
             rec = json.loads(line)
-            if rec.get("thinking") != thinking or rec.get("kategorie") in ("werkzeuge", "langer_kontext", "struktur"):
-                continue  # diese Kategorien prüft styrke selbst
-            rows.append({**rec, "run": Path(run_dir).name})
+            manual = rec.get("manuell", (rec.get("check") or {}).get("ok") is None and not (rec.get("check") or {}).get("skipped"))
+            if rec.get("thinking") == thinking and manual and not rec.get("error"):
+                rows.append({**rec, "run": Path(run_dir).name, "model": model})
+        if rows:
+            by_model[model] = rows
+    return [row for rows in by_model.values() for row in rows]
+
+
+def export_blind(run_dirs: list[str | Path], out_dir: str | Path, thinking: str = "off", seed: int | None = None) -> dict[str, int]:
+    """Schreibt die Bewertungsseite: je Frage die Antworten der Modelle ohne Herkunft, dazu getrennt den Schlüssel."""
+    rows = collect_manual(run_dirs, thinking)
     random.Random(seed).shuffle(rows)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     key: dict[str, dict[str, Any]] = {}
-    with open(out / "bogen.csv", "w", encoding="utf-8-sig", newline="") as fh:  # mit BOM, damit Excel Umlaute erkennt
-        writer = csv.writer(fh, delimiter=";")
-        writer.writerow(["nr", "frage", "referenz", "antwort", "punkte", "bemerkung"])
-        for nr, row in enumerate(rows, 1):
-            key[str(nr)] = {"run": row["run"], "id": row["id"], "kategorie": row["kategorie"], "thinking": row["thinking"]}
-            writer.writerow([nr, row["frage"], row.get("referenz", ""), row.get("antwort") or "(keine Antwort)", "", ""])
-    (out / "schluessel.json").write_text(json.dumps(key, ensure_ascii=False, indent=1), encoding="utf-8")
-
-    # Dieselben Antworten als Seite zum Sortieren: je Frage alle Antworten, wortgleiche zu einer Karte vereint.
     questions: dict[str, dict[str, Any]] = {}
     for nr, row in enumerate(rows, 1):
+        key[str(nr)] = {"model": row["model"], "run": row["run"], "id": row["id"], "kategorie": row["kategorie"]}
         question = questions.setdefault(
             row["id"], {"id": row["id"], "frage": row["frage"], "referenz": row.get("referenz", ""), "cards": []}
         )
         text = (row.get("antwort") or "").strip()
         card = next((c for c in question["cards"] if c["text"] == text), None)
         if card is None:
-            question["cards"].append({"nrs": [nr], "text": text})
+            question["cards"].append({"nrs": [nr], "text": text})  # wortgleiche Antworten sind eine Karte
         else:
             card["nrs"].append(nr)
+    (out / "schluessel.json").write_text(json.dumps(key, ensure_ascii=False, indent=1), encoding="utf-8")
     sheet_id = hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:10]
     ordered = [questions[qid] for qid in sorted(questions)]
     (out / "bewertung.html").write_text(build_page(sheet_id, ordered), encoding="utf-8")
-    (out / "anleitung.md").write_text(
-        "# Bewertung der Antworten\n\n"
-        "Die Datei `bogen.csv` enthält Fragen, je eine Referenzantwort und die Antwort eines Modells. Von welchem "
-        "Modell eine Antwort stammt, steht dort nicht; die Reihenfolge ist gemischt.\n\n"
-        "Bitte in jeder Zeile die Spalte `punkte` ausfüllen:\n\n"
-        + "".join(f"- {part.strip()}\n" for part in SCALE.split(";"))
-        + "\nMaßstab ist die Referenzantwort. Sie beschreibt, was eine gute Antwort enthält; der Wortlaut darf "
-        "abweichen. Fremde Schriftzeichen oder Wörter in anderen Sprachen mitten im deutschen Text sind ein Mangel. "
-        "Die Spalte `bemerkung` ist freiwillig.\n\n"
-        "Die Datei `schluessel.json` ordnet die Zeilen den Modellen zu. Wer bewertet, bekommt sie nicht.\n",
-        encoding="utf-8",
-    )
-    return {"antworten": len(rows), "laeufe": len({r["run"] for r in rows}), "fragen": len(questions)}
+    return {"antworten": len(rows), "modelle": len({r["model"] for r in rows}), "fragen": len(questions)}
 
 
-def import_rankings(files: list[str | Path], key_file: str | Path) -> dict[str, Any]:
-    """Liest Rangfolgen aus der Bewertungsseite (eine Datei je Person) und rechnet den mittleren Platz je Lauf.
+def import_verdicts(files: list[str | Path], key_file: str | Path) -> dict[str, Any]:
+    """Liest die Urteile aus der Bewertungsseite (eine Datei je Person) und zählt sie je Modell aus.
 
-    Platz 1 ist der beste. Wortgleiche Antworten teilen sich ihre Plätze: Stehen
-    zwei Läufe gemeinsam auf den Plätzen 2 und 3, bekommen beide 2,5.
+    ``punkte`` ist der Anteil der erreichbaren Punkte in Prozent: gut zählt 2,
+    teils 1, schlecht 0.
     """
     key = json.loads(Path(key_file).read_text(encoding="utf-8"))
-    places: dict[str, dict[str, list[float]]] = {}
-    firsts: dict[str, int] = {}
+    counts: dict[str, dict[str, dict[str, int]]] = {}
     raters: list[str] = []
-    judged = 0
+    total = 0
     for file in files:
         data = json.loads(Path(file).read_text(encoding="utf-8"))
-        if data.get("format") != "styrke-rangfolge-1":
+        if data.get("format") != "styrke-urteile-1":
             raise ValueError(f"{file} ist keine Ergebnisdatei der Bewertungsseite")
         raters.append(data.get("bewerter") or Path(file).stem)
-        for groups in (data.get("rangfolgen") or {}).values():
-            judged += 1
-            position = 0
-            for group in groups:
-                place = position + (len(group) + 1) / 2  # mittlerer Platz der Gruppe
-                for nr in group:
-                    info = key.get(str(nr))
-                    if not info:
-                        continue
-                    places.setdefault(info["run"], {}).setdefault(info["kategorie"], []).append(place)
-                    if position == 0:
-                        firsts[info["run"]] = firsts.get(info["run"], 0) + 1
-                position += len(group)
-    result: dict[str, Any] = {"bewerter": raters, "bewertete_fragen": judged, "laeufe": {}}
-    for run, categories in places.items():
-        every = [v for values in categories.values() for v in values]
-        result["laeufe"][run] = {
-            "platz_mittel": round(sum(every) / len(every), 2),
-            "n": len(every),
-            "erster_platz": firsts.get(run, 0),
-            "kategorien": {cat: round(sum(v) / len(v), 2) for cat, v in sorted(categories.items())},
-        }
-    result["laeufe"] = dict(sorted(result["laeufe"].items(), key=lambda item: item[1]["platz_mittel"]))
-    return result
+        for verdicts in (data.get("urteile") or {}).values():
+            for nr, verdict in verdicts.items():
+                info = key.get(str(nr))
+                if not info or verdict not in VERDICTS:
+                    continue
+                total += 1
+                per = counts.setdefault(info["model"], {}).setdefault(info["kategorie"], {v: 0 for v in VERDICTS})
+                per[verdict] += 1
 
+    def score(c: dict[str, int]) -> float:
+        n = sum(c.values())
+        return round(100 * sum(VERDICTS[v] * k for v, k in c.items()) / (2 * n), 1) if n else 0.0
 
-def import_blind(sheet: str | Path, key_file: str | Path) -> dict[str, Any]:
-    """Liest den ausgefüllten Bogen und rechnet mittlere Punkte je Lauf und Kategorie."""
-    key = json.loads(Path(key_file).read_text(encoding="utf-8"))
-    scores: dict[str, dict[str, list[float]]] = {}
-    missing = 0
-    with open(sheet, encoding="utf-8-sig", newline="") as fh:
-        for row in csv.DictReader(fh, delimiter=";"):
-            info = key.get(str(row.get("nr", "")).strip())
-            points = str(row.get("punkte") or "").strip().replace(",", ".")
-            if not info:
-                continue
-            try:
-                value = float(points)
-            except ValueError:
-                missing += 1
-                continue
-            scores.setdefault(info["run"], {}).setdefault(info["kategorie"], []).append(value)
-    result: dict[str, Any] = {"skala": SCALE, "ohne_punkte": missing, "laeufe": {}}
-    for run, categories in sorted(scores.items()):
-        every = [v for values in categories.values() for v in values]
-        result["laeufe"][run] = {
-            "mittel": round(sum(every) / len(every), 2),
-            "n": len(every),
-            "kategorien": {cat: {"mittel": round(sum(v) / len(v), 2), "n": len(v)} for cat, v in sorted(categories.items())},
+    result: dict[str, Any] = {"bewerter": raters, "urteile": total, "modelle": {}}
+    for model, categories in counts.items():
+        every = {v: sum(c[v] for c in categories.values()) for v in VERDICTS}
+        result["modelle"][model] = {
+            "punkte": score(every), **every, "n": sum(every.values()),
+            "kategorien": {cat: {"punkte": score(c), **c} for cat, c in sorted(categories.items())},
         }
+    result["modelle"] = dict(sorted(result["modelle"].items(), key=lambda item: -item[1]["punkte"]))
     return result

@@ -144,6 +144,7 @@ DEFAULT_STAGES: dict[str, dict[str, Any]] = {
         "questions": "quality/fragen.yaml",  # relativ zum Ordner der Testmatrix
         "thinking": ["off", "on"],
         "max_tokens": {"off": 1200, "on": 6000},
+        "manual_suffix": "Antworte in höchstens fünf Sätzen.",  # Zusatz bei den von Hand bewerteten Fragen
         "context_cap": None,  # Obergrenze für die langen Texte der Kategorie langer_kontext, in Tokens
     },
 }

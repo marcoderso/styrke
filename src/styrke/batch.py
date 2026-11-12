@@ -118,7 +118,7 @@ def write_state(matrix: Matrix, jobs: list[Job], stages: list[int], started: flo
 
 async def run_batch(
     matrix: Matrix, jobs: list[Job], stages: list[int], *, log: Callable[[str], None], smoke: bool = False,
-    endpoint: str | None = None, fresh: bool = False, report_path: str | None = "bericht.html",
+    endpoint: str | None = None, fresh: bool = False, report_path: str | None = "bericht.html", redo: bool = False,
 ) -> int:
     """Fährt alle Aufträge nacheinander. Rückgabewert 0, wenn jede Zelle alle Stufen abgeschlossen hat."""
     started = time.time()
@@ -126,7 +126,7 @@ async def run_batch(
         found = None if fresh else existing_run(matrix, job, smoke, bool(endpoint))
         if found:
             job.run_dir = str(found)
-            if all(s in stages_done(found) for s in stages):
+            if not redo and all(s in stages_done(found) for s in stages):
                 job.status, job.note = "fertig", "schon vorhanden"
     write_state(matrix, jobs, stages, started, False)
 
@@ -139,7 +139,7 @@ async def run_batch(
         write_state(matrix, jobs, stages, started, False)
         opts = RunOptions(
             matrix_path=str(matrix.path), cell_id=job.cell, variant_id=job.variant, stages=stages,
-            endpoint=endpoint, resume=job.run_dir, smoke=smoke,
+            endpoint=endpoint, resume=job.run_dir, smoke=smoke, redo=redo,
         )
         try:
             job.exit_code = await run_cell(opts, log=log)

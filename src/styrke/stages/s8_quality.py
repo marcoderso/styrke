@@ -31,6 +31,8 @@ NEEDLE_SUFFIX = "\n=== ENDE ===\n\n"
 async def build_messages(ctx: StageContext, question: dict[str, Any], thinking: str) -> list[dict[str, Any]] | None:
     """Nachrichten für eine Frage; ``None``, wenn ihr langer Text nicht in den Kontext passt."""
     content = question["frage"]
+    if question.get("pruefung") == "manuell" and ctx.params["s8"].get("manual_suffix"):
+        content += " " + ctx.params["s8"]["manual_suffix"]  # kurze Antworten lassen sich nebeneinander vergleichen
     if question.get("nadel"):
         tokens = min(question["kontext_tokens"], ctx.params["s8"].get("context_cap") or question["kontext_tokens"])
         if not ctx.fits(tokens, ctx.params["s8"]["max_tokens"][thinking] + 1024):
@@ -48,6 +50,7 @@ async def ask(ctx: StageContext, question: dict[str, Any], thinking: str, tools:
     params = ctx.params["s8"]
     rec: dict[str, Any] = {
         "id": question["id"], "kategorie": question["kategorie"], "thinking": thinking, "frage": question["frage"],
+        "manuell": question.get("pruefung") == "manuell",
         "referenz": question.get("referenz", ""), "antwort": None, "tool_calls": [], "error": None,
     }
     messages = await build_messages(ctx, question, thinking)

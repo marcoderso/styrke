@@ -131,7 +131,8 @@ def cmd_all(args: argparse.Namespace) -> int:
         assert task is not None
         asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
         return await run_batch(
-            matrix, jobs, stages, log=log, smoke=args.smoke, endpoint=args.endpoint, fresh=args.neu, report_path=args.bericht
+            matrix, jobs, stages, log=log, smoke=args.smoke, endpoint=args.endpoint, fresh=args.neu, report_path=args.bericht,
+            redo=args.redo,
         )
 
     try:
@@ -381,49 +382,35 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def cmd_bewertung(args: argparse.Namespace) -> int:
-    from .quality import export_blind, import_blind
+    from .quality import export_blind, import_verdicts
     from .report import discover
 
     if args.action == "export":
         run_dirs = [Path(p) for p in args.paths] or discover(load_matrix(args.matrix).host.runs_dir)
         result = export_blind(run_dirs, args.out, thinking=args.thinking)
         if not result["antworten"]:
-            print("Fehler: In den Läufen liegen keine Antworten der Stufe 8 (answers/s8.jsonl).", file=sys.stderr)
+            print("Fehler: In den Läufen liegen keine von Hand zu bewertenden Antworten der Stufe 8.", file=sys.stderr)
             return 1
-        print(f"{result['antworten']} Antworten zu {result['fragen']} Fragen aus {result['laeufe']} Läufen nach {args.out}/ geschrieben.")
-        print("bewertung.html geht an die bewertenden Personen: im Browser öffnen, sortieren, Ergebnis speichern.")
+        print(f"{result['antworten']} Antworten zu {result['fragen']} Fragen von {result['modelle']} Modellen nach {args.out}/ geschrieben.")
+        print("bewertung.html geht an die bewertenden Personen: im Browser öffnen, je Antwort urteilen, Ergebnis speichern.")
         print("schluessel.json bleibt bei dir. Einlesen: styrke bewertung import bewertung_*.json")
         return 0
-    key_file = args.schluessel or str(Path(args.out) / "schluessel.json")
-    if args.paths and all(str(p).endswith(".json") for p in args.paths) and not (len(args.paths) == 2 and args.paths[0].endswith(".csv")):
-        from .quality import import_rankings
-
-        files = [p for p in args.paths if Path(p).name != "schluessel.json"]
-        try:
-            result = import_rankings(files, key_file)
-        except (OSError, ValueError) as exc:
-            print(f"Fehler: {exc}", file=sys.stderr)
-            return 1
-        Path(args.out).mkdir(parents=True, exist_ok=True)
-        (Path(args.out) / "rangfolge.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
-        print(f"{len(result['bewerter'])} Bewertende ({', '.join(result['bewerter'])}), {result['bewertete_fragen']} Rangfolgen. Platz 1 ist der beste.")
-        print(f"  {'Lauf':<58} {'Platz im Mittel':>16} {'erster Platz':>13}")
-        for run, info in result["laeufe"].items():
-            print(f"  {run:<58} {info['platz_mittel']:>16.2f} {info['erster_platz']:>13}")
-        print(f"Einzelheiten je Kategorie: {Path(args.out) / 'rangfolge.json'}")
-        return 0
-    if len(args.paths) != 2:
-        print("Aufruf: styrke bewertung import <bewertung_name.json> [weitere ...]   oder   <bogen.csv> <schluessel.json>", file=sys.stderr)
+    files = [p for p in args.paths if Path(p).name != "schluessel.json"]
+    if not files:
+        print("Aufruf: styrke bewertung import <bewertung_name.json> [weitere ...]", file=sys.stderr)
         return 1
-    result = import_blind(args.paths[0], args.paths[1])
+    try:
+        result = import_verdicts(files, args.schluessel or str(Path(args.out) / "schluessel.json"))
+    except (OSError, ValueError) as exc:
+        print(f"Fehler: {exc}", file=sys.stderr)
+        return 1
     Path(args.out).mkdir(parents=True, exist_ok=True)
-    (Path(args.out) / "bewertung.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"Skala: {result['skala']}")
-    for run, info in result["laeufe"].items():
-        cats = ", ".join(f"{cat} {c['mittel']:.2f}" for cat, c in info["kategorien"].items())
-        print(f"  {run}: Mittel {info['mittel']:.2f} aus {info['n']} Antworten ({cats})")
-    if result["ohne_punkte"]:
-        print(f"  {result['ohne_punkte']} Zeilen ohne Punkte blieben unberücksichtigt.")
+    (Path(args.out) / "urteile.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"{len(result['bewerter'])} Bewertende ({', '.join(result['bewerter'])}), {result['urteile']} Urteile.")
+    print(f"  {'Modell':<40} {'Punkte':>8} {'gut':>5} {'teils':>6} {'schlecht':>9}")
+    for model, info in result["modelle"].items():
+        print(f"  {model:<40} {info['punkte']:>7.1f}% {info['gut']:>5} {info['teils']:>6} {info['schlecht']:>9}")
+    print(f"Punkte: Anteil der erreichbaren, gut zählt 2, teils 1, schlecht 0. Je Kategorie: {Path(args.out) / 'urteile.json'}")
     return 0
 
 
@@ -553,6 +540,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--nur-pruefen", action="store_true", help="nur zeigen, welche Images und Modelle noch fehlen; nichts starten")
     p.add_argument("--vorbereiten", action="store_true", help=argparse.SUPPRESS)  # früherer Schalter; die Vorbereitung läuft jetzt immer
     p.add_argument("--neu", action="store_true", help="vorhandene Läufe nicht fortsetzen, sondern neu beginnen")
+    p.add_argument("--redo", action="store_true", help="die gewählten Stufen auch wiederholen, wenn sie schon abgeschlossen sind")
     p.add_argument("--bericht", default="bericht.html", help="Zieldatei des Berichts am Ende (Standard: bericht.html)")
     p.add_argument("--smoke", action="store_true", help="kleine Parameter für einen schnellen Funktionstest")
     p.add_argument("--endpoint", help="alle Zellen gegen diese laufende Engine fahren (nur für Tests)")
